@@ -161,18 +161,14 @@ public void StartTouch(int client, int action[3])
 		}
 		else if (action[0] == 1 || action[0] == 5) // Start Zone or Speed Start
 		{
-			if (g_Stage[g_iClientInZone[client][2]][client] == 1 && g_bPracticeMode[client]) // If practice mode is on
+			/*if (g_Stage[g_iClientInZone[client][2]][client] == 1 && g_bPracticeMode[client]) // If practice mode is on
 			{
 				Command_goToPlayerCheckpoint(client, 1);
-			}
-			else
-			{
-				g_Stage[g_iClientInZone[client][2]][client] = 1;
-
-				Client_Stop(client, 1);
-				// Resetting last checkpoint
-				lastCheckpoint[g_iClientInZone[client][2]][client] = 1;
-			}
+			}*/
+			g_Stage[g_iClientInZone[client][2]][client] = 1;
+			Client_Stop(client, 1);
+			// Resetting last checkpoint
+			lastCheckpoint[g_iClientInZone[client][2]][client] = 1;
 		}
 		else if (action[0] == 2) // End Zone
 		{
@@ -184,12 +180,13 @@ public void StartTouch(int client, int action[3])
 			{
 				Client_Stop(client, 1);
 			}
-			if (g_bPracticeMode[client]) // Go back to normal mode if checkpoint mode is on
+			//Do we really need to restart a player....
+			/*if (g_bPracticeMode[client]) // Go back to normal mode if checkpoint mode is on
 			{
 				Command_normalMode(client, 1);
 				clearPlayerCheckPoints(client);
 				g_fLastTimePracUsed[client] = GetGameTime();
-			}
+			}*/
 			// Resetting checkpoints
 			lastCheckpoint[g_iClientInZone[client][2]][client] = 999;
 		}
@@ -203,10 +200,11 @@ public void StartTouch(int client, int action[3])
 					//This tempfix probably introduces the exploit that allows huge start speeds
 					Command_normalMode(client, 1); // Temp fix. Need to track stages checkpoints were made in.
 				}
+				/* Allows for practising Telehops.
 				else 
 				{
 					Command_goToPlayerCheckpoint(client, 1);
-				}
+				}*/
 			}
 			else
 			{  // Setting valid to false, in case of checkers
@@ -277,7 +275,7 @@ public void EndTouch(int client, int action[3])
 					}
 					else if((GetGameTime() - g_fLastTimePracUsed[client]) < 3.0) //practice mode check
 					{
-						PrintToChat(client, "[%c%s%c] You have been using practice in the past few seconds, timer @!!@!@disabled.", MOSSGREEN, g_szChatPrefix, WHITE);
+						PrintToChat(client, "[%c%s%c] You have been using practice in the past few seconds, timer disabled.", MOSSGREEN, g_szChatPrefix, WHITE);
 						ClientCommand(client, "play buttons\\button10.wav");
 					}
 					else
@@ -340,23 +338,29 @@ public void getZoneTeamColor(int team, int color[4])
 
 public void DrawBeamBox(int client)
 {
-	int zColor[4];
-	getZoneTeamColor(g_CurrentZoneTeam[client], zColor);
-	TE_SendBeamBoxToClient(client, g_Positions[client][1], g_Positions[client][0], g_BeamSprite, g_HaloSprite, 0, 30, 1.0, 5.0, 5.0, 2, 1.0, zColor, 0, 1);
-	CreateTimer(1.0, BeamBox, GetClientSerial(client), TIMER_REPEAT);
+	if (IsValidClient(client) && !IsFakeClient(client))
+	{
+		int zColor[4];
+		getZoneTeamColor(g_CurrentZoneTeam[client], zColor);
+		TE_SendBeamBoxToClient(client, g_Positions[client][1], g_Positions[client][0], g_BeamSprite, g_HaloSprite, 0, 30, 1.0, 5.0, 5.0, 2, 1.0, zColor, 0, 1);
+		CreateTimer(1.0, BeamBox, GetClientSerial(client), TIMER_REPEAT);
+	}
 }
 
 public Action BeamBox(Handle timer, any serial)
 {
 	int client = GetClientFromSerial(serial);
-	if (IsClientInGame(client))
+	if (IsValidClient(client) && !IsFakeClient(client))
 	{
-		if (g_Editing[client] == 2)
+		if (IsClientInGame(client) )
 		{
-			int zColor[4];
-			getZoneTeamColor(g_CurrentZoneTeam[client], zColor);
-			TE_SendBeamBoxToClient(client, g_Positions[client][1], g_Positions[client][0], g_BeamSprite, g_HaloSprite, 0, 30, 1.0, 5.0, 5.0, 2, 1.0, zColor, 0, 1);
-			return Plugin_Continue;
+			if (g_Editing[client] == 2)
+			{
+				int zColor[4];
+				getZoneTeamColor(g_CurrentZoneTeam[client], zColor);
+				TE_SendBeamBoxToClient(client, g_Positions[client][1], g_Positions[client][0], g_BeamSprite, g_HaloSprite, 0, 30, 1.0, 5.0, 5.0, 2, 1.0, zColor, 0, 1);
+				return Plugin_Continue;
+			}
 		}
 	}
 	return Plugin_Stop;
@@ -406,9 +410,13 @@ public Action BeamBoxAll(Handle timer, any data)
 			getZoneTeamColor(g_mapZones[i][Team], tzColor);
 			for (int p = 1; p <= MaxClients; p++)
 			{
-				if (IsValidClient(p))
+				if (IsValidClient(p) && !IsFakeClient(p))
 				{
-					if ( g_mapZones[i][Vis] == 2 ||  g_mapZones[i][Vis] == 3)
+					// Only display zone to client if the client is in the zones zonegroup
+					if (g_iClientInZone[p][2] != g_mapZones[i][zoneGroup])
+						return Plugin_Handled;
+
+					if (g_mapZones[i][Vis] == 2 ||  g_mapZones[i][Vis] == 3)
 					{
 						if (GetClientTeam(p) ==  g_mapZones[i][Vis] && g_ClientSelectedZone[p] != i)
 						{
@@ -418,7 +426,8 @@ public Action BeamBoxAll(Handle timer, any data)
 								buffer_a[x] = g_mapZones[i][PointA][x];
 								buffer_b[x] = g_mapZones[i][PointB][x];
 							}
-							TE_SendBeamBoxToClient(p, buffer_a, buffer_b, g_BeamSprite, g_HaloSprite, 0, 30, GetConVarFloat(g_hChecker), 5.0, 5.0, 2, 1.0, tzColor, 0, 0, i);
+							// stock void TE_SendBeamBoxToClient(int client, float uppercorner[3], float bottomcorner[3], int ModelIndex, int HaloIndex, int StartFrame, int FrameRate, float Life, float Width, float EndWidth, int FadeLength, float Amplitude, const int Color[4], int Speed, int type, int zoneid = -1)
+							TE_SendBeamBoxToClient(p, buffer_a, buffer_b, g_BeamSprite, g_HaloSprite, 0, 30, GetConVarFloat(g_hChecker), 1.0, 1.0, 0, 0.0, tzColor, 0, 0, i);
 						}
 					}
 					else
@@ -431,7 +440,8 @@ public Action BeamBoxAll(Handle timer, any data)
 								buffer_a[x] = g_mapZones[i][PointA][x];
 								buffer_b[x] = g_mapZones[i][PointB][x];
 							}
-							TE_SendBeamBoxToClient(p, buffer_a, buffer_b, g_BeamSprite, g_HaloSprite, 0, 30, GetConVarFloat(g_hChecker), 5.0, 5.0, 2, 1.0, zColor, 0, 0, i);
+							// stock void TE_SendBeamBoxToClient(int client, float uppercorner[3], float bottomcorner[3], int ModelIndex, int HaloIndex, int StartFrame, int FrameRate, float Life, float Width, float EndWidth, int FadeLength, float Amplitude, const int Color[4], int Speed, int type, int zoneid = -1)
+							TE_SendBeamBoxToClient(p, buffer_a, buffer_b, g_BeamSprite, g_HaloSprite, 0, 30, GetConVarFloat(g_hChecker), 1.0, 1.0, 0, 0.0, zColor, 0, 0, i);
 						}
 					}
 				}
@@ -523,7 +533,7 @@ public void BeamBox_OnPlayerRunCmd(int client)
 stock void TE_SendBeamBoxToClient(int client, float uppercorner[3], float bottomcorner[3], int ModelIndex, int HaloIndex, int StartFrame, int FrameRate, float Life, float Width, float EndWidth, int FadeLength, float Amplitude, const int Color[4], int Speed, int type, int zoneid = -1)
 {
 	//0 = Do not display zones, 1 = Display the lower edges of zones, 2 = Display whole zone
-	if (!IsValidClient(client) || GetConVarInt(g_hZoneDisplayType) < 1)
+	if (!IsValidClient(client) || IsFakeClient(client) || GetConVarInt(g_hZoneDisplayType) < 1)
 		return;
 
 	if (GetConVarInt(g_hZoneDisplayType) > 1 || type == 1) // All sides
@@ -1466,6 +1476,7 @@ public void EditorMenu(int client)
 		editMenu.AddItem("", "Start Drawing the Zone");
 	else
 		editMenu.AddItem("", "Restart the Zone Drawing");
+	editMenu.AddItem("","Autozone [BETA]");
 
 	// If editing an existing zone
 	if (g_Editing[client] > 0)
@@ -1546,7 +1557,14 @@ public int MenuHandler_Editor(Handle tMenu, MenuAction action, int client, int i
 					TR_GetEndPosition(g_Positions[client][0]);
 					EditorMenu(client);
 				}
-				case 1: // Setting zone type
+				case 1:
+				{
+					// AutoZone
+					autoZone(client);
+					
+					EditorMenu(client);
+				}
+				case 2: // Setting zone type
 				{
 					g_bEditZoneType[client] = true;
 					if (g_CurrentSelectedZoneGroup[client] == 0)
@@ -1555,7 +1573,7 @@ public int MenuHandler_Editor(Handle tMenu, MenuAction action, int client, int i
 						SelectBonusZoneType(client);
 
 				}
-				case 2:
+				case 3:
 				{
 					// Pause
 					if (g_Editing[client] == 2)
@@ -1567,7 +1585,7 @@ public int MenuHandler_Editor(Handle tMenu, MenuAction action, int client, int i
 					}
 					EditorMenu(client);
 				}
-				case 3:
+				case 4:
 				{
 					// Delete
 					if (g_ClientSelectedZone[client] != -1)
@@ -1578,7 +1596,7 @@ public int MenuHandler_Editor(Handle tMenu, MenuAction action, int client, int i
 					resetSelection(client);
 					ZoneMenu(client);
 				}
-				case 4:
+				case 5:
 				{
 					// Save
 					if (g_ClientSelectedZone[client] != -1)
@@ -1598,7 +1616,7 @@ public int MenuHandler_Editor(Handle tMenu, MenuAction action, int client, int i
 					resetSelection(client);
 					ZoneMenu(client);
 				}
-				case 5:
+				case 6:
 				{
 					// Set team
 					++g_CurrentZoneTeam[client];
@@ -1606,7 +1624,7 @@ public int MenuHandler_Editor(Handle tMenu, MenuAction action, int client, int i
 						g_CurrentZoneTeam[client] = 0;
 					EditorMenu(client);
 				}
-				case 6:
+				case 7:
 				{
 					// Teleport
 					float ZonePos[3];
@@ -1619,12 +1637,12 @@ public int MenuHandler_Editor(Handle tMenu, MenuAction action, int client, int i
 					TeleportEntity(client, ZonePos, NULL_VECTOR, NULL_VECTOR);
 					EditorMenu(client);
 				}
-				case 7:
+				case 8:
 				{
 					// Scaling
 					ScaleMenu(client);
 				}
-				case 8:
+				case 9:
 				{
 					++g_CurrentZoneVis[client];
 					switch (g_CurrentZoneVis[client])
@@ -1747,6 +1765,7 @@ public int MenuHandler_Scale(Handle tMenu, MenuAction action, int client, int it
 				case 6:
 				{
 					g_Positions[client][g_ClientSelectedPoint[client]][2] = FloatSub(g_Positions[client][g_ClientSelectedPoint[client]][2], g_AvaliableScales[g_ClientSelectedScale[client]]);
+					
 				}
 				case 7:
 				{
@@ -1858,4 +1877,165 @@ stock void RemoveZones()
 			AcceptEntityInput(i, "Kill");
 		}
 	}
+}
+public void autoZone(int client)
+{
+	//Set Bool to false so if no zone can be found we dont break something
+	g_bAutoZone[client] = false;
+	float pos[3];
+	GetAimOrigin(client, pos);
+	//Main Method for getting zones. Will add 2 positions to g_fAutoZoneBlock on success
+	GetBoxFromPoint(pos, g_fAutoZoneBlock[client], client);
+	//Check for success
+	if(g_bAutoZone[client])
+	{
+		//Read values from method
+		g_Positions[client][0] = g_fAutoZoneBlock[client][0];
+		g_Positions[client][1] = g_fAutoZoneBlock[client][1];
+		//Set Client to be paused 
+		g_Editing[client] = 2;
+		PrintToChat(client, "[%c%s%c] %cZone Found. Press Save To save zone", MOSSGREEN, g_szChatPrefix, WHITE, LIMEGREEN);
+		//Add 50.0 units in height onto zone. Not sure about this part.
+		float height = GetConVarFloat(g_hAutoZoneHeight);
+		g_Positions[client][0][2] = FloatAdd(g_Positions[client][0][2], height);
+		//Draw the zone to the client, because as the g_editing is paused it will not refresh automatically.
+		DrawBeamBox(client);
+	}
+}
+// Credits for finding corners of a block to: justshoot, Zipcore
+stock int TraceWallOrigin(float fOrigin[3], float vAngles[3], float result[3])
+{
+	Handle trace = TR_TraceRayFilterEx(fOrigin, vAngles, MASK_SHOT, RayType_Infinite, TraceEntityFilterPlayer);
+	if (TR_DidHit(trace))
+	{
+		TR_GetEndPosition(result, trace);
+		CloseHandle(trace);
+		return 1;
+	}
+	CloseHandle(trace);
+	return 0;
+}
+
+
+stock int TraceGroundOrigin(float fOrigin[3], float result[3])
+{
+	float vAngles[3] =  { 90.0, 0.0, 0.0 };
+	Handle trace = TR_TraceRayFilterEx(fOrigin, vAngles, MASK_SHOT, RayType_Infinite, TraceEntityFilterPlayer);
+	if (TR_DidHit(trace))
+	{
+		TR_GetEndPosition(result, trace);
+		CloseHandle(trace);
+		return 1;
+	}
+	CloseHandle(trace);
+	return 0;
+}
+
+
+stock void GetBeamEndOrigin(float fOrigin[3], float vAngles[3], float distance, float result[3])
+{
+	float AngleVector[3];
+	GetAngleVectors(vAngles, AngleVector, NULL_VECTOR, NULL_VECTOR);
+	NormalizeVector(AngleVector, AngleVector);
+	ScaleVector(AngleVector, distance);
+	AddVectors(fOrigin, AngleVector, result);
+}
+
+
+stock void GetBeamHitOrigin(float fOrigin[3], float vAngles[3], float result[3])
+{
+	Handle trace = TR_TraceRayFilterEx(fOrigin, vAngles, MASK_SHOT, RayType_Infinite, TraceEntityFilterPlayer);
+	if (TR_DidHit(trace))
+	{
+		TR_GetEndPosition(result, trace);
+		CloseHandle(trace);
+	}
+}
+
+
+stock int GetAimOrigin(int client, float hOrigin[3])
+{
+	float vAngles[3], fOrigin[3];
+	GetClientEyePosition(client, fOrigin);
+	GetClientEyeAngles(client, vAngles);
+	
+	Handle trace = TR_TraceRayFilterEx(fOrigin, vAngles, MASK_SHOT, RayType_Infinite, TraceEntityFilterPlayer);
+	
+	if (TR_DidHit(trace))
+	{
+		TR_GetEndPosition(hOrigin, trace);
+		CloseHandle(trace);
+		return 1;
+	}
+	
+	CloseHandle(trace);
+	return 0;
+}
+
+
+stock void GetBoxFromPoint(float origin[3], float result[2][3], int client)
+{
+	float temp[3];
+	temp = origin;
+	temp[2] += 1.0;
+	float ang[4][3];
+	ang[1][1] = 90.0;
+	ang[2][1] = 180.0;
+	ang[3][1] = -90.0;
+	bool edgefound[4];
+	float dist[4];
+	float tempdist[4], position[3], ground[3], Last[4], Edge[4][3];
+	for (int i = 0; i < 4; i++)
+	{
+		TraceWallOrigin(temp, ang[i], Edge[i]);
+		tempdist[i] = GetVectorDistance(temp, Edge[i]);
+		Last[i] = origin[2];
+		while (dist[i] < tempdist[i])
+		{
+			if (edgefound[i])
+				break;
+			GetBeamEndOrigin(temp, ang[i], dist[i], position);
+			TraceGroundOrigin(position, ground);
+			if ((Last[i] != ground[2]) && (Last[i] > ground[2]))
+			{
+				Edge[i] = ground;
+				edgefound[i] = true;
+			}
+			Last[i] = ground[2];
+			dist[i] += 10.0;
+		}
+		if (!edgefound[i])
+		{
+			TraceGroundOrigin(Edge[i], Edge[i]);
+			edgefound[i] = true;
+		}
+		else
+		{
+			ground = Edge[i];
+			ground[2] = origin[2];
+			MakeVectorFromPoints(ground, origin, position);
+			GetVectorAngles(position, ang[i]);
+			ground[2] -= 1.0;
+			GetBeamHitOrigin(ground, ang[i], Edge[i]);
+		}
+		Edge[i][2] = origin[2];
+	}
+	if (edgefound[0] && edgefound[1] && edgefound[2] && edgefound[3])
+	{
+		result[0][2] = origin[2];
+		result[1][2] = origin[2];
+		result[0][0] = Edge[0][0];
+		result[0][1] = Edge[1][1];
+		result[1][0] = Edge[2][0];
+		result[1][1] = Edge[3][1];
+		g_bAutoZone[client] = true;
+	}
+	else
+		PrintToChat(client, "[%c%s%c] %cNo edges for Zone Found.", MOSSGREEN, g_szChatPrefix, WHITE, RED);
+}
+
+
+public bool TraceEntityFilterPlayer(int entity, int contentsMask)
+{
+	return entity > MaxClients;
 }

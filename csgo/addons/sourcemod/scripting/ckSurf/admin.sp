@@ -359,7 +359,18 @@ public int TopMenuHandler2(Handle topmenu, TopMenuAction action, TopMenuObject o
 		if (action == TopMenuAction_SelectOption)
 		Admin_ckPanel(param, 0);
 }
-
+public Action Admin_ReloadMap(int client, int args)
+{
+	if (!g_bServerDataLoaded)
+	{
+		PrintToChat(client, "[%c%s%c] The server is still being loaded. Please try to reload the map later.", MOSSGREEN, g_szChatPrefix, WHITE);
+		return Plugin_Handled;
+	}
+	db_selectMapTier();
+	db_selectMapZones();
+	PrintToChat(client, "[%c%s%c] Map has been reloaded.", MOSSGREEN, g_szChatPrefix, WHITE);
+	return Plugin_Handled;
+}
 public Action Admin_insertMapTier(int client, int args)
 {
 	if (!IsValidClient(client))
@@ -384,13 +395,50 @@ public Action Admin_insertMapTier(int client, int args)
 		tier = StringToInt(arg1);
 		GetCmdArg(1, arg1, sizeof(arg1));
 		zonegroup = StringToInt(arg1);
-		if ((tier < 7 || tier > 0) && (-1 < zonegroup < g_mapZoneGroupCount))
+		if ((tier < 8 || tier > 0) && (-1 < zonegroup < g_mapZoneGroupCount))
+		{
 			db_insertMapTier(tier, zonegroup);
+			PrintToChat(client, "[%c%s%c] Set map tier to: %i.", MOSSGREEN, g_szChatPrefix, WHITE, tier);
+		}
 		else
-			PrintToChat(client, "[%c%s%c] Invalid tier number or zone group. Please choose a tier number between 1-6 and a valid zone group.", MOSSGREEN, g_szChatPrefix, WHITE);
+			PrintToChat(client, "[%c%s%c] Invalid tier number or zone group. Please choose a tier number between 1-7 and a valid zone group.", MOSSGREEN, g_szChatPrefix, WHITE);
 	}
 	return Plugin_Handled;
 }
+
+public Action Admin_insertTier(int client, int args)
+{
+	if (!IsValidClient(client))
+		return Plugin_Handled;
+
+	if (args < 1)
+	{
+		ReplyToCommand(client, "[CK] Usage: sm_at <Tier>");
+		
+	}
+	if (args > 0)
+	{
+		char arg1[3];
+		int tier;
+		GetCmdArg(1, arg1, sizeof(arg1));
+		tier = StringToInt(arg1);
+		
+		if (0 < tier < 8) 
+		{	
+			if(-1 < 0 < g_mapZoneGroupCount)
+			{
+				db_insertMapTier(tier, 0);
+				PrintToChat(client, "[%c%s%c] Set map tier to: %i.", MOSSGREEN, g_szChatPrefix, WHITE, tier);
+			}
+			else
+				PrintToChat(client, "[%c%s%c] No Zone have been found for this map.", MOSSGREEN, g_szChatPrefix, WHITE);
+		}
+		else
+			PrintToChat(client, "[%c%s%c] Invalid tier number. Please choose a tier number between 1-7.", MOSSGREEN, g_szChatPrefix, WHITE);
+	}
+	return Plugin_Handled;
+}
+
 
 public Action Admin_insertSpawnLocation(int client, int args)
 {
@@ -1347,4 +1395,31 @@ public Action Admin_DeleteCheckpoints(int client, int args)
 				g_fCheckpointTimesRecord[x][i][k] = 0.0;
 
 	db_deleteCheckpoints();
+}
+
+public Action Command_extend(int client, int args)
+{
+	if (!IsValidClient(client) || RateLimit(client))
+		return Plugin_Handled;
+	if (args < 1)
+	{
+		ReplyToCommand(client, "[SM] Usage: sm_extend <message>");
+		return Plugin_Handled;	
+	}
+	
+	char arg1[3];
+	GetCmdArg(1, arg1, sizeof(arg1));
+	int ExtendAmount = StringToInt(arg1);
+
+	PrintToChatAll("[%c%s%c] The current map has been extended by ADMIN.", MOSSGREEN, g_szChatPrefix, WHITE);
+	ExtendMapTimeLimit(ExtendAmount * 60);
+	return Plugin_Handled;
+}
+public Action Admin_fixBot(int client, int args)
+{
+	if (!IsValidClient(client) || RateLimit(client))
+		return Plugin_Handled;
+	botFix();
+	PrintToChatAll("[%c%s%c] Replay bots are being restarted.", MOSSGREEN, g_szChatPrefix, WHITE);	
+	return Plugin_Handled;
 }

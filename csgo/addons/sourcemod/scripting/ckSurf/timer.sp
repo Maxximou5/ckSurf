@@ -59,7 +59,7 @@ public Action RefreshAdminMenu(Handle timer, any serial)
 {
 	int client = GetClientFromSerial(serial);
 	if (IsValidClient(client) && !IsFakeClient(client))
-		ckAdminMenu(client);
+		ckAdminMenu(client); 		
 
 	return Plugin_Handled;
 }
@@ -152,12 +152,26 @@ public Action AttackTimer(Handle timer)
 	}
 	return Plugin_Continue;
 }
-
+public Action tierTimer(Handle timer)
+{
+	for (int client = 1; client <= MaxClients; client++)
+	{
+		if (IsValidClient(client) && (CheckCommandAccess(client, "sm_at", ADMFLAG_GENERIC, false)))
+		{	
+			if(!g_bTierFound[0] || (-1 < 0 < g_mapZoneGroupCount))
+			{
+				PrintToChat(client, "[%c%s%c] %cPlease give this map a tier. write %c!at <tiernumber>%c.", MOSSGREEN, g_szChatPrefix, WHITE, RED, YELLOW,RED);
+			}
+		}
+	}
+	return Plugin_Continue;
+}
 public Action CKTimer1(Handle timer)
 {
 	if (g_bRoundEnd)
 		return Plugin_Continue;
-
+	
+	
 	for (int client = 1; client <= MaxClients; client++)
 	{
 		if (IsValidClient(client))
@@ -205,13 +219,11 @@ public Action animateTimer(Handle timer)
 	{
 		g_iAnimate++;
 	}
+	
+	
 }
 
 public Action advertTimer(Handle timer)
-{
-	CreateTimer(2.75, advertTimer2, INVALID_HANDLE, TIMER_FLAG_NO_MAPCHANGE | TIMER_REPEAT);
-}
-public Action advertTimer2(Handle timer)
 {
 	if(g_iAdvert==3)
 	{
@@ -348,7 +360,11 @@ public Action CKTimer2(Handle timer)
 	}
 	return Plugin_Continue;
 }
-
+public Action Timer_checkforrecord(Handle timer)
+{
+	db_CheckLatestRecords();
+	return Plugin_Continue;
+}
 //challenge start countdown
 public Action Timer_Countdown(Handle timer, any serial)
 {
@@ -356,6 +372,9 @@ public Action Timer_Countdown(Handle timer, any serial)
 	if (IsValidClient(client) && g_bChallenge[client] && !IsFakeClient(client))
 	{
 		PrintToChat(client, "[%c%s%c] %c%i", RED, g_szChatPrefix, WHITE, YELLOW, g_CountdownTime[client]);
+		ClientCommand(client, "play buttons\\bell1.wav");
+		SetEntityMoveType(client, MOVETYPE_NONE);
+		
 		g_CountdownTime[client]--;
 		if (g_CountdownTime[client] <= 0)
 		{
@@ -363,6 +382,8 @@ public Action Timer_Countdown(Handle timer, any serial)
 			PrintToChat(client, "%t", "ChallengeStarted1", RED, g_szChatPrefix, WHITE, YELLOW);
 			PrintToChat(client, "%t", "ChallengeStarted2", RED, g_szChatPrefix, WHITE, YELLOW);
 			PrintToChat(client, "%t", "ChallengeStarted3", RED, g_szChatPrefix, WHITE, YELLOW);
+			ClientCommand(client, "play animation\\jets\\jet_sonicboom_03.wav");
+			Command_Restart(client, 1);
 			return Plugin_Stop;
 		}
 	}
@@ -442,8 +463,12 @@ public Action CheckChallenge(Handle timer, any serial)
 
 			//chat msgs
 			if (IsValidClient(client))
+			{	
 				PrintToChat(client, "%t", "ChallengeWon", RED, g_szChatPrefix, WHITE, YELLOW, WHITE);
-
+				//ClientCommand(client, "play weapons\\party_horn_01.wav");
+				ClientCommand(client, "play resource\\warning.wav");
+				
+			}
 			return Plugin_Stop;
 		}
 	}
@@ -502,13 +527,11 @@ public Action TerminateRoundTimer(Handle timer)
 
 public Action BotRestartTimer(Handle timer)
 {
-	Handle replay = FindConVar("ck_replay_bot");
-	Handle bonus = FindConVar("ck_bonus_bot");
-	SetConVarInt(replay, 1, true, true);
-	SetConVarInt(bonus, 1, true, false);
+	LoadReplays();
 	PrintToChatAll("[%c%s%c] Replay bots have been restarted.", MOSSGREEN, g_szChatPrefix, WHITE);
 	return Plugin_Handled;
 }
+
 
 
 public Action WelcomeMsgTimer(Handle timer, any serial)
@@ -517,8 +540,12 @@ public Action WelcomeMsgTimer(Handle timer, any serial)
 	char szBuffer[512];
 	GetConVarString(g_hWelcomeMsg, szBuffer, 512);
 	if (IsValidClient(client) && !IsFakeClient(client) && szBuffer[0])
+	{
 		CPrintToChat(client, "%s", szBuffer);
-
+		#if defined DEV_BUILD 
+		PrintToChat(client, "[CKSURF]THIS PLUGIN VERSION (V%s.DEV) IS A DEVELOPEMNT BUILD. IT SHOULD NOT BE USED IN PRODUCTION.", PLUGIN_VERSION);
+		#endif
+	}
 	return Plugin_Handled;
 }
 
@@ -534,6 +561,7 @@ public Action HelpMsgTimer(Handle timer, any serial)
 public Action AdvertTimer(Handle timer, any serial)
 {
 	g_Advert++;
+	
 	if ((g_Advert % 2) == 0)
 	{
 		if (g_bhasBonus)
@@ -614,18 +642,18 @@ public void HideHud(any serial)
 		{
 			// Display
 			if (!g_bHideChat[client])
-				SetEntProp(client, Prop_Send, "m_iHideHUD", HIDE_RADAR);
+				SetEntProp(client, Prop_Send, "m_iHideHUD", HIDE_RADAR | HIDE_ROUNDTIMER);
 			else
-				SetEntProp(client, Prop_Send, "m_iHideHUD", HIDE_RADAR | HIDE_CHAT);
+				SetEntProp(client, Prop_Send, "m_iHideHUD", HIDE_RADAR | HIDE_CHAT | HIDE_ROUNDTIMER);
 
 		}
 		else
 		{
 			// Hiding
 			if (!g_bHideChat[client])
-				SetEntProp(client, Prop_Send, "m_iHideHUD", GetEntProp(client, Prop_Send, "m_iHideHUD") | HIDE_RADAR | HIDE_CROSSHAIR);
+				SetEntProp(client, Prop_Send, "m_iHideHUD", GetEntProp(client, Prop_Send, "m_iHideHUD") | HIDE_RADAR | HIDE_CROSSHAIR | HIDE_ROUNDTIMER);
 			else
-				SetEntProp(client, Prop_Send, "m_iHideHUD", GetEntProp(client, Prop_Send, "m_iHideHUD") | HIDE_RADAR | HIDE_CHAT | HIDE_CROSSHAIR);
+				SetEntProp(client, Prop_Send, "m_iHideHUD", GetEntProp(client, Prop_Send, "m_iHideHUD") | HIDE_RADAR | HIDE_CHAT | HIDE_CROSSHAIR | HIDE_ROUNDTIMER);
 		}
 	}
 	return;

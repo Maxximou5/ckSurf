@@ -14,7 +14,7 @@
 #include <cstrike>
 #include <geoip>
 #include <basecomm>
-#include <colors>
+#include <colorvariables>
 #undef REQUIRE_EXTENSIONS
 #include <clientprefs>
 #undef REQUIRE_PLUGIN
@@ -22,6 +22,7 @@
 #include <mapchooser>
 #include <ckSurf>
 #include <ckSurf-misc>
+#include <StealthRevived> 	
 
 /*====================================
 =            Declarations            =
@@ -33,9 +34,11 @@
 
 // Require new syntax
 #pragma newdecls required
+#pragma semicolon 1
 
 // Plugin info
-#define PLUGIN_VERSION "1.20.5.3"
+#define PLUGIN_VERSION "1.21.3"
+//#define DEV_BUILD
 
 // Database definitions
 #define MYSQL 0
@@ -89,6 +92,7 @@
 #define MULTI_SERVER_MAPCYCLE "configs/ckSurf/multi_server_mapcycle.txt"
 #define CUSTOM_TITLE_PATH "configs/ckSurf/custom_chat_titles.txt"
 #define SKILLGROUP_PATH "configs/ckSurf/skillgroups.cfg"
+#define CUSTOM_SOUND "configs/ckSurf/custom_sounds.txt"
 
 // Checkpoint definitions
 #define CPLIMIT 35			// Maximum amount of checkpoints in a map
@@ -104,9 +108,11 @@
 #define MAX_SKILLGROUPS 64
 
 // UI definitions
-#define HIDE_RADAR (1 << 12)
+#define HIDE_RADAR (1 << 12)	
 #define HIDE_CHAT ( 1<<7 )
+#define HIDE_ROUNDTIMER (1 << 13)
 #define HIDE_CROSSHAIR 1<<8
+
 
 // Replay definitions
 #define BM_MAGIC 0xBAADF00D
@@ -122,6 +128,11 @@
 // Title definitions
 #define TITLE_COUNT 23		// The amount of custom titles that can be configured in custom_chat_titles.txt
 
+// Sound Defintions
+#define SOUND_COUNT 100	// The amount of custom sounds that can be added to db. 
+
+// Show Triggers
+#define EF_NODRAW 32
 /*====================================
 =            Enumerations            =
 ====================================*/
@@ -199,8 +210,13 @@ public Plugin myinfo =
 =            Variables            =
 =================================*/
 
+bool stealthFound = false;
 //used to fix the hibernation bug
 bool hasStarted = false;
+//used to reload bots if the first player is joining a team. Bots break if there are no players connected
+//Or if they get loaded before players conenct, this way we load them only after the first player is in game!
+//in theory, but yeah... 
+bool botsLoaded = false;
 /*----------  Stages  ----------*/
 int g_Stage[MAXZONEGROUPS][MAXPLAYERS + 1];						// Which stage is the client in
 bool g_bhasStages; 												// Does the map have stages
@@ -226,6 +242,16 @@ bool g_bAdminFlagTitlesTemp[MAXPLAYERS + 1][TITLE_COUNT]; 		// Which title admin
 int g_iAdminSelectedClient[MAXPLAYERS + 1]; 					// Which clientid did the admin select
 int g_iAdminEditingType[MAXPLAYERS + 1]; 						// What the admin is editing
 
+char g_szServerNameBrowser[128];
+/*----------  Custom Sounds  ----------*/
+char g_szSoundPath[SOUND_COUNT][128];
+char g_szSoundName[SOUND_COUNT][128];
+int g_iSoundCost[SOUND_COUNT];
+int g_iSoundType[SOUND_COUNT]; 
+int g_iSoundPerm[SOUND_COUNT]; 
+int g_iBuyingMenuLookup[MAXPLAYERS + 1][SOUND_COUNT];
+int g_iBuyingMenuType[MAXPLAYERS + 1];
+int g_iCustomSoundCount; 										// How many custom Sounds are loaded
 /*----------  VIP Variables  ----------*/
 // Enable VIP CVar
 //bool g_bServerVipCommand;
@@ -278,13 +304,15 @@ float g_fMaxPercCompleted[MAXPLAYERS + 1]; 						// The biggest % amount the pla
 
 /*----------  Advert variables  ----------*/
 int g_Advert; 													// Defines which advert to play
-
 /*----------  Maptier Variables  ----------*/
 char g_sTierString[MAXZONEGROUPS][512];							// The string for each zonegroup
 char g_sJustTier[64]; 												// Just the tier for the map
 bool g_bTierEntryFound;											// Tier data found?
 bool g_bTierFound[MAXZONEGROUPS];								// Tier data found in ZGrp
 Handle AnnounceTimer[MAXPLAYERS + 1];							// Tier announce timer
+
+/*----------      HUD MSG     ----------*/
+Handle g_hHudSync;
 
 /*----------  Zone Variables  ----------*/
 // Client
@@ -300,6 +328,9 @@ int g_mapZoneGroupCount;										// Zone group cound
 float g_fZoneCorners[MAXZONES][8][3];							// Additional zone corners, can't store multi dimensional arrays in enums..
 
 // Editing zones
+ConVar g_hAutoZoneHeight;
+bool g_bAutoZone[MAXPLAYERS + 1];
+float g_fAutoZoneBlock[MAXPLAYERS + 1][2][3];
 bool g_bEditZoneType[MAXPLAYERS + 1];							// If editing zone type
 char g_CurrentZoneName[MAXPLAYERS + 1][64];						// Selected zone's name
 float g_Positions[MAXPLAYERS + 1][2][3];						// Selected zone's position
@@ -341,8 +372,9 @@ ConVar g_hSlopeFixEnable;
 /*----------  Forwards  ----------*/
 Handle g_MapFinishForward;
 Handle g_BonusFinishForward;
+Handle g_MapRecordForward;
+Handle g_BonusRecordForward;
 Handle g_PracticeFinishForward;
-int iGameText = -1;
 /*----------  CVars  ----------*/
 // Zones
 int g_ZoneMenuFlag;
@@ -438,10 +470,6 @@ ConVar g_hSpeedPreSpeed = null; 								// Speed Start zone speed cap
 ConVar g_hBonusPreSpeed = null; 								// Bonus start zone speed cap
 ConVar g_hSoundEnabled = null; 									// Enable timer start sound
 ConVar g_hSoundPath = null;										// Define start sound
-ConVar g_hSoundRecordBonus = null;								// Sound for beating bonus record
-ConVar g_hSoundRecordMap = null;								// Sound for beating map record
-ConVar g_hSoundRecordBeat = null;								// Sound for beating your own record
-//char sSoundPath[64];
 ConVar g_hSpawnToStartZone = null; 								// Teleport on spawn to start zone 
 ConVar g_hAnnounceRank = null; 									// Min rank to announce in chat
 ConVar g_hForceCT = null; 										// Force players CT
@@ -450,6 +478,11 @@ float g_fLastChatMessage[MAXPLAYERS + 1]; 						// Last message time
 int g_messages[MAXPLAYERS + 1]; 								// Spam message count
 ConVar g_henableChatProcessing = null; 							// Is chat processing enabled
 ConVar g_hMultiServerMapcycle = null;							// Use multi server mapcycle
+ConVar g_hCustomHud = null;										// Use new style hud or old.
+ConVar g_hMultiServerAnnouncements = null;						// Announce latest records made on another server
+ConVar g_hDebugMode = null;										// Log Debug Messages
+ConVar g_hFootsteps = null;
+
 
 /*----------  SQL Variables  ----------*/
 Handle g_hDb = null; 											// SQL driver
@@ -495,6 +528,12 @@ bool g_bAutoBhopClient[MAXPLAYERS + 1]; 						// Use auto bhop?
 bool g_borg_AutoBhopClient[MAXPLAYERS + 1];
 bool g_bInfoPanel[MAXPLAYERS + 1]; 								// Client is showing the info panel
 bool g_borg_InfoPanel[MAXPLAYERS + 1];
+int g_SrSoundId[MAXPLAYERS + 1]; 
+int g_BrSoundId[MAXPLAYERS + 1]; 
+int g_BeatSoundId[MAXPLAYERS + 1]; 
+int g_orgSrSoundId[MAXPLAYERS + 1]; 
+int g_orgBrSoundId[MAXPLAYERS + 1]; 
+int g_orgBeatSoundId[MAXPLAYERS + 1]; 
 
 /*----------  Run Variables  ----------*/
 float g_fPersonalRecord[MAXPLAYERS + 1];						// Clients personal record in map
@@ -602,9 +641,6 @@ char g_szCountry[MAXPLAYERS + 1][100];							// Country codes
 char g_szCountryCode[MAXPLAYERS + 1][16];						// Country codes
 char g_szSteamID[MAXPLAYERS + 1][32];							// Client's steamID
 char g_BlockedChatText[256][256];								// Blocked chat commands
-char g_szSoundRecordBonus[64];									// Sound for beating bonus record
-char g_szSoundRecordMap[64];										// Sound for beating map record
-char g_szSoundRecordBeat[64];									// Sound for beating your own record
 float g_fLastOverlay[MAXPLAYERS + 1];							// Last time an overlay was displayed
 int g_iAnimate;													// Counts seconds in order to allow for animating displays.
 int g_iAdvert;													// Counts seconds in order to allow for adverts which update differntly to displays.
@@ -632,6 +668,8 @@ int g_AdminMenuFlag; 											// Admin flag required for !ckadmin
 ConVar g_hAdminMenuFlag = null;
 Handle g_hAdminMenu = null; 									// Add !ckadmin to !admin
 int g_AdminMenuLastPage[MAXPLAYERS + 1]; 						// Weird admin menu trickery TODO: wtf
+int g_CurrentTierMenu[MAXPLAYERS + 1];
+char g_szTierMapName[MAXPLAYERS + 1][256];
 
 /*----------  Challenge variables  ----------*/ 
 /**
@@ -695,6 +733,14 @@ ConVar g_cvar_sv_hibernate_when_empty = null;
 * Autobhop handle
 */
 ConVar g_cvar_sv_autobunnyhopping = null;
+
+// Show Triggers https://forums.alliedmods.net/showthread.php?t=290356
+int g_iTriggerTransmitCount;
+bool g_bShowTriggers[MAXPLAYERS + 1];
+int g_Offset_m_fEffects = -1;
+
+// Rate Limiting Commands
+float g_fCommandLastUsed[MAXPLAYERS + 1];
 
 /*=========================================
 =            Predefined arrays            =
@@ -783,6 +829,11 @@ public void OnLibraryAdded(const char[] name)
 		}
 	}
 }
+public void OnAllPluginsLoaded()
+{
+	stealthFound = LibraryExists("StealthRevived");
+}
+ 
 
 public void OnPluginEnd()
 {
@@ -818,12 +869,19 @@ public void OnLibraryRemoved(const char[] name)
 public void OnMapStart()
 {
 	hasStarted = true;
-	
+	char sBuffer[256];
+	GetConVarString(FindConVar("hostname"), sBuffer,sizeof(sBuffer));
+	Format(g_szServerNameBrowser, 128, sBuffer);
 	// Get mapname
 	GetCurrentMap(g_szMapName, 128);
+
+	// create nav file
+	CreateNavFile();
+
 	// Load spawns
 	if (!g_bRenaming && !g_bInTransactionChain)
 		checkSpawnPoints();
+
 	// Workshop fix
 	char mapPieces[6][128];
 	int lastPiece = ExplodeString(g_szMapName, "/", mapPieces, sizeof(mapPieces), sizeof(mapPieces[]));
@@ -831,23 +889,24 @@ public void OnMapStart()
 
 	/** Start Loading Server Settings:
 	* 1. Load zones (db_selectMapZones)
-	* 2. Get map record time (db_GetMapRecord_Pro)
-	* 3. Get the amount of players that have finished the map (db_viewMapProRankCount)
-	* 4. Get the fastest bonus times (db_viewFastestBonus)
-	* 5. Get the total amount of players that have finsihed the bonus (db_viewBonusTotalCount)
-	* 6. Get map tier (db_selectMapTier)
-	* 7. Get record checkpoints (db_viewRecordCheckpointInMap)
-	* 8. Calculate average run time (db_CalcAvgRunTime)
-	* 9. Calculate averate bonus time (db_CalcAvgRunTimeBonus)
-	* 10. Calculate player count (db_CalculatePlayerCount)
-	* 11. Calculate player count with points (db_CalculatePlayersCountGreater0) 
-	* 12. Get spawn locations (db_selectSpawnLocations)
+	* 2. Get spawn locations (db_selectSpawnLocations)
+	* 3. Get map record time (db_GetMapRecord_Pro)
+	* 4. Get the amount of players that have finished the map (db_viewMapProRankCount)
+	* 5. Get the fastest bonus times (db_viewFastestBonus)
+	* 6. Get the total amount of players that have finsihed the bonus (db_viewBonusTotalCount)
+	* 7. Get map tier (db_selectMapTier)
+	* 8. Get record checkpoints (db_viewRecordCheckpointInMap)
+	* 9. Calculate average run time (db_CalcAvgRunTime)
+	* 10. Calculate averate bonus time (db_CalcAvgRunTimeBonus)
+	* 11. Calculate player count (db_CalculatePlayerCount)
+	* 12. Calculate player count with points (db_CalculatePlayersCountGreater0)  
 	* 13. Clear latest records (db_ClearLatestRecords)
 	* 14. Get dynamic timelimit (db_GetDynamicTimelimit)
 	* -> loadAllClientSettings
 	*/
 	if (!g_bRenaming && !g_bInTransactionChain/* && IsServerProcessing()*/)
 	{
+		
 		db_selectMapZones();
 	}
 
@@ -855,7 +914,7 @@ public void OnMapStart()
 	ExplodeString(g_szMapName, "_", g_szMapPrefix, 2, 32);
 
 	//sv_pure 1 could lead to problems with the ckSurf models
-	ServerCommand("sv_pure 0");
+	ServerCommand("sv_pure 0;mp_respawn_on_death_ct 1;mp_respawn_on_death_t 1"); 
 	
 	//reload language files
 	LoadTranslations("ckSurf.phrases");
@@ -863,7 +922,7 @@ public void OnMapStart()
 	// load configs
 	loadHiddenChatCommands();
 	loadCustomTitles();
-	
+	loadCustomSounds();
 	CheatFlag("bot_zombie", false, true);
 	for (int i = 0; i < MAXZONEGROUPS; i++)
 	{
@@ -874,13 +933,17 @@ public void OnMapStart()
 	
 	//precache
 	InitPrecache();
+	//soundPrecache();
 	SetCashState();
 
 	//timers
 	CreateTimer(0.1, CKTimer1, INVALID_HANDLE, TIMER_FLAG_NO_MAPCHANGE | TIMER_REPEAT);
 	CreateTimer(1.0, CKTimer2, INVALID_HANDLE, TIMER_FLAG_NO_MAPCHANGE | TIMER_REPEAT);
+	CreateTimer(10.0, tierTimer, INVALID_HANDLE, TIMER_FLAG_NO_MAPCHANGE | TIMER_REPEAT);
+	CreateTimer(10.0, Timer_checkforrecord, INVALID_HANDLE, TIMER_FLAG_NO_MAPCHANGE | TIMER_REPEAT);
 	CreateTimer(1.5, animateTimer, INVALID_HANDLE, TIMER_FLAG_NO_MAPCHANGE | TIMER_REPEAT);
-	CreateTimer(0.25, advertTimer, INVALID_HANDLE, TIMER_FLAG_NO_MAPCHANGE);
+	CreateTimer(3.0, advertTimer, INVALID_HANDLE, TIMER_FLAG_NO_MAPCHANGE | TIMER_REPEAT);
+
 	//Start Async as to not make adverts update at same time as display format.
 	CreateTimer(60.0, AttackTimer, INVALID_HANDLE, TIMER_FLAG_NO_MAPCHANGE | TIMER_REPEAT);
 	CreateTimer(600.0, PlayerRanksTimer, INVALID_HANDLE, TIMER_FLAG_NO_MAPCHANGE | TIMER_REPEAT);
@@ -932,6 +995,9 @@ public void OnMapStart()
 		g_szUsedVoteExtend[i][0] = '\0';
 
 	g_VoteExtends = 0;
+
+	// Show Triggers
+	g_iTriggerTransmitCount = 0;
 }
 
 public void OnMapEnd()
@@ -1033,7 +1099,9 @@ public void OnClientPutInServer(int client)
 	}
 	else
 		g_MVPStars[client] = 0;
-	
+	// Footsteps
+	if (!IsFakeClient(client))
+		SendConVarValue(client, g_hFootsteps, "0");
 	//client country
 	GetCountry(client);
 	
@@ -1180,6 +1248,14 @@ public void OnClientDisconnect(int client)
 	// Stop recording
 	if (g_hRecording[client] != null)
 		StopRecording(client);
+
+	// Stop Showing Triggers
+	if (g_bShowTriggers[client])
+	{
+		g_bShowTriggers[client] = false;
+		--g_iTriggerTransmitCount;
+		TransmitTriggers(g_iTriggerTransmitCount > 0);
+	}
 }
 
 public void OnSettingChanged(Handle convar, const char[] oldValue, const char[] newValue)
@@ -1692,16 +1768,23 @@ public void OnPluginStart()
 	}
 
 	//CreateTimer(60.0, Event_ReloadMap);
-
+	if (g_hHudSync == null)
+		g_hHudSync = CreateHudSynchronizer();
 	//Get Server Tickate
 	g_Server_Tickrate = RoundFloat(1 / GetTickInterval());
-
+	
+	g_hFootsteps = FindConVar("sv_footsteps");
 	//language file
 	LoadTranslations("ckSurf.phrases");
 
 	CreateConVar("ckSurf_version", PLUGIN_VERSION, "ckSurf Version", FCVAR_DONTRECORD | FCVAR_SPONLY | FCVAR_REPLICATED | FCVAR_NOTIFY);
 
+	g_hDebugMode = CreateConVar("ck_debug_mode", "0", "Log Debug Messages", FCVAR_NOTIFY, true, 0.0, true, 1.0);
+
 	g_hChatPrefix = CreateConVar("ck_chat_prefix", "SURF", "Determines the prefix used for chat messages", FCVAR_NOTIFY);
+	g_hAutoZoneHeight = CreateConVar("ck_autozone_height", "66.0", "Sets the automatic height for autozoning", FCVAR_NOTIFY, true, 0.0, true, 500.0);
+	g_hMultiServerAnnouncements = CreateConVar("ck_announce_records", "1", "on/off Determine if records from other servers should be announced on this server", FCVAR_NOTIFY, true, 0.0, true, 1.0);
+	g_hCustomHud = CreateConVar("ck_new_hud", "1", "Determine if the new hud is shown", FCVAR_NOTIFY, true, 0.0, true, 1.0);
 	g_hServerName = CreateConVar("ck_server_name", "ckSurf | Surf Plugin", "Determines the server name displayed in the timer text whilst in the start zone", FCVAR_NOTIFY);
 	g_hAdvert1 = CreateConVar("ck_advert_1", "ckSurf | Surf Plugin", "A 40 Character Advert shown to players when the timer isnt running. Set to same as ck_server_name to hide this.", FCVAR_NOTIFY);
 	g_hAdvert2 = CreateConVar("ck_advert_2", "ckSurf | Surf Plugin", "A 40 Character Advert shown to players when the timer isnt running. Set to same as ck_server_name to hide this.", FCVAR_NOTIFY);
@@ -1725,7 +1808,7 @@ public void OnPluginStart()
 	g_hDynamicTimelimit = CreateConVar("ck_dynamic_timelimit", "0", "on/off - Sets a suitable timelimit by calculating the average run time (This method requires ck_map_end 1, greater than 5 map times and a default timelimit in your server config for maps with less than 5 times", FCVAR_NOTIFY, true, 0.0, true, 1.0);
 	g_hExtraPoints = CreateConVar("ck_ranking_extra_points_improvements", "15.0", "Gives players x extra points for improving their time", FCVAR_NOTIFY, true, 0.0, true, 100.0);
 	g_hExtraPoints2 = CreateConVar("ck_ranking_extra_points_firsttime", "50.0", "Gives players x extra points for finishing a map for the first time", FCVAR_NOTIFY, true, 0.0, true, 100.0);
-	g_hWelcomeMsg = CreateConVar("ck_welcome_msg", " {yellow}>>{default} {grey}Welcome! This server is using {lime}ckSurf", "Welcome message (supported color tags: {default}, {darkred}, {green}, {lightgreen}, {orange}, {blue}, {olive}, {lime}, {red}, {purple}, {grey}, {yellow}, {lightblue}, {steelblue}, {darkblue}, {pink}, {lightred})", FCVAR_NOTIFY);
+	g_hWelcomeMsg = CreateConVar("ck_welcome_msg", " {yellow}>>{default} {grey}Welcome! This server is using {lime}ckSurf", "Welcome message (supported color tags: {default}, {red}, {lightred}, {darkred}, {bluegray}, {blue}, {darkblue}, {purple}, {orchid}, {yellow}, {gold}, {lightgreen}, {green}, {lime}, {gray}, {gray2})", FCVAR_NOTIFY);
 	g_hChecker = CreateConVar("ck_zone_checker", "5.0", "The duration in seconds when the beams around zones are refreshed", FCVAR_NOTIFY);
 	g_hZoneDisplayType = CreateConVar("ck_zone_drawstyle", "1", "0 = Do not display zones, 1 = display the lower edges of zones, 2 = display whole zones", FCVAR_NOTIFY);
 	g_hZonesToDisplay = CreateConVar("ck_zone_drawzones", "1", "Which zones are visible for players. 1 = draw start & end zones, 2 = draw start, end, stage and bonus zones, 3 = draw all zones", FCVAR_NOTIFY);
@@ -1735,9 +1818,6 @@ public void OnPluginStart()
 	g_hSpawnToStartZone = CreateConVar("ck_spawn_to_start_zone", "1.0", "1 = Automatically spawn to the start zone when the client joins the team", FCVAR_NOTIFY, true, 0.0, true, 1.0);
 	g_hSoundEnabled = CreateConVar("ck_startzone_sound_enabled", "1.0", "Enable the sound after leaving the start zone", FCVAR_NOTIFY, true, 0.0, true, 1.0);
 	g_hSoundPath = CreateConVar("ck_startzone_sound_path", "buttons\\button3.wav", "The path to the sound file that plays after the client leaves the start zone", FCVAR_NOTIFY);
-	g_hSoundRecordBonus = CreateConVar("ck_sound_record_bonus", "quake/holyshit.mp3", "The path to the sound file that plays after beating the bonus record", FCVAR_NOTIFY);
-	g_hSoundRecordMap = CreateConVar("ck_sound_record_map", "quake/wickedsick.mp3", "The path to the sound file that plays after beating the map record", FCVAR_NOTIFY);
-	g_hSoundRecordBeat = CreateConVar("ck_sound_record_beat", "quake/unstoppable.mp3", "The path to the sound file that plays after beating your record", FCVAR_NOTIFY);
 	g_hAnnounceRank = CreateConVar("ck_min_rank_announce", "0", "Higher ranks than this won't be announced to the everyone on the server. 0 = Announce all records", FCVAR_NOTIFY, true, 0.0);
 	g_hAnnounceRecord = CreateConVar("ck_chat_record_type", "0", "0: Announce all times to chat, 1: Only announce PB's to chat, 2: Only announce SR's to chat", FCVAR_NOTIFY, true, 0.0, true, 2.0);
 	g_hForceCT = CreateConVar("ck_force_players_ct", "0", "Forces all players to join the CT team", FCVAR_NOTIFY, true, 0.0, true, 1.0);
@@ -1750,7 +1830,7 @@ public void OnPluginStart()
 	g_hVoteExtendTime = CreateConVar("ck_vote_extend_time", "10", "The time in minutes that is added to the remaining map time if a vote extend is successful", FCVAR_NOTIFY);
 	g_hMaxVoteExtends = CreateConVar("ck_max_vote_extends", "3", "The max number of VIP vote extends", FCVAR_NOTIFY);
 	g_hMaxVoteExtendsUniquePlayers = CreateConVar("ck_max_vote_extends_unique_players", "1", "on/off - Prohibit multiple extends of a person", FCVAR_NOTIFY);
-	g_hVoteExtendMapTimeLimit = CreateConVar("ck_vote_extend_map_limit_time", "2", "The vote extend is not active during this amount of time in minutes before the map ends", FCVAR_NOTIFY);
+	g_hVoteExtendMapTimeLimit = CreateConVar("ck_vote_extend_map_limit_time", "3", "The vote extend is not active during this amount of time in seconds before the map ends", FCVAR_NOTIFY);
 	g_hDoubleRestartCommand = CreateConVar("ck_double_restart_command", "0", "(1 / 0) Requires 2 successive !r commands to restart the player to prevent accidental usage", FCVAR_NOTIFY, true, 0.0, true, 1.0);
 	g_hBackupReplays = CreateConVar("ck_replay_backup", "1", "(1 / 0) Back up replay files, when they are being replaced", FCVAR_NOTIFY, true, 0.0, true, 1.0);
 	g_hReplaceReplayTime = 	CreateConVar("ck_replay_replace_faster", "1", "(1 / 0) Replace record bots if a players time is faster than the bot, even if the time is not a server record", FCVAR_NOTIFY, true, 0.0, true, 1.0);
@@ -1914,11 +1994,20 @@ public void OnPluginStart()
 	GetConVarString(g_hAdvert2, g_szAdvert2, sizeof(g_szAdvert2));
 	HookConVarChange(g_hAdvert2, OnSettingChanged);
 
+
 	db_setupDatabase();
 
 	//RegConsoleCmd("sm_rtimes", Command_rTimes, "[%s] spawns a usp silencer", g_szChatPrefix);
 
 	//client commands
+	RegConsoleCmd("sm_mrank", Command_SelectMapTime, "[ckSurf] Prints a players map record in chat");
+	RegConsoleCmd("sm_triggers", Command_ToggleTriggers, "[ckSurf] Toggle display of map triggers");
+	RegConsoleCmd("sm_showtriggers", Command_ToggleTriggers, "[ckSurf] Toggle display of map triggers");
+	RegConsoleCmd("sm_mapmusic", Client_mapmusic, "[ckSurf] Stops Map Music");
+	RegConsoleCmd("sm_stopmusic", Client_mapmusic, "[ckSurf] Stops Map Music");
+	RegConsoleCmd("sm_musicmute", Client_mapmusic, "[ckSurf] Stops Map Music");
+	RegConsoleCmd("sm_stopsound", Client_mapmusic, "[ckSurf] Stops Map Music");
+	RegConsoleCmd("sm_mapsound", Client_mapmusic, "[ckSurf] Stops Map Music");
 	RegConsoleCmd("sm_usp", Client_Usp, "[ckSurf] spawns a usp silencer");
 	RegConsoleCmd("sm_avg", Client_Avg, "[ckSurf] prints in chat the average time of the current map");
 	RegConsoleCmd("sm_accept", Client_Accept, "[ckSurf] allows you to accept a challenge request");
@@ -1951,7 +2040,7 @@ public void OnPluginStart()
 	RegConsoleCmd("sm_topSurfers", Client_Top, "[ckSurf] displays top rankings (Top 100 Players, Top 50 overall)");
 	RegConsoleCmd("sm_bonustop", Client_BonusTop, "[ckSurf] displays top rankings of the bonus");
 	RegConsoleCmd("sm_btop", Client_BonusTop, "[ckSurf] displays top rankings of the bonus");
-	RegConsoleCmd("sm_stop", Client_Stop, "[ckSurf] stops your timer");
+	RegConsoleCmd("sm_stop", Command_Stop, "[ckSurf] stops your timer");
 	RegConsoleCmd("sm_ranks", Client_Ranks, "[ckSurf] prints in chat the available player ranks");
 	RegConsoleCmd("sm_pause", Client_Pause, "[ckSurf] on/off pause (timer on hold and movement frozen)");
 	RegConsoleCmd("sm_showsettings", Client_Showsettings, "[ckSurf] shows ckSurf server settings");
@@ -1963,7 +2052,10 @@ public void OnPluginStart()
 	RegConsoleCmd("+noclip", NoClip, "[ckSurf] Player noclip on");
 	RegConsoleCmd("-noclip", UnNoClip, "[ckSurf] Player noclip off");
 	RegConsoleCmd("sm_nc", Command_ckNoClip, "[ckSurf] Player noclip on/off");
-
+	RegConsoleCmd("sm_sshop", Command_sound, "[ckSurf] Sound Shop");
+	RegConsoleCmd("sm_soundshop", Command_sound, "[ckSurf] Sound Shop"); 	
+	RegConsoleCmd("sm_csound", Command_sound, "[ckSurf] Sound Shop"); 
+	RegConsoleCmd("sm_customsound", Command_sound, "[ckSurf] Sound Shop"); 
 	// Teleportation commands
 	RegConsoleCmd("sm_stages", Command_SelectStage, "[ckSurf] Opens up the stage selector");
 	RegConsoleCmd("sm_r", Command_Restart, "[ckSurf] Teleports player back to the start");
@@ -2001,6 +2093,7 @@ public void OnPluginStart()
 	RegConsoleCmd("sm_howto", Command_HowTo, "[ckSurf] Displays a youtube video on how to surf");
 	RegConsoleCmd("sm_ve", Command_VoteExtend, "[ckSurf] Vote to extend the map");
 	RegConsoleCmd("sm_vmute", Command_MutePlayer, "[ckSurf] Mute a player");
+	//RegConsoleCmd("sm_maps", Command_ShowMapTiers, "[ckSurf] List All Maps By Tier."); WIP TODO
 
 	// Teleport to the start of the stage
 	RegConsoleCmd("sm_stuck", Command_Teleport, "[ckSurf] Teleports player back to the start of the stage");
@@ -2047,9 +2140,15 @@ public void OnPluginStart()
 
 	RegAdminCmd("sm_addmaptier", Admin_insertMapTier, g_AdminMenuFlag, "[ckSurf] Changes maps tier");
 	RegAdminCmd("sm_amt", Admin_insertMapTier, g_AdminMenuFlag, "[ckSurf] Changes maps tier");
+	RegAdminCmd("sm_at", Admin_insertTier, g_AdminMenuFlag, "[ckSurf] Changes maps tier");
+	RegAdminCmd("sm_reload", Admin_ReloadMap, ADMFLAG_GENERIC, "[ckSurf] Reloads Map Settings");
+	
 	RegAdminCmd("sm_addspawn", Admin_insertSpawnLocation, g_AdminMenuFlag, "[ckSurf] Changes the position !r takes players to");
 	RegAdminCmd("sm_delspawn", Admin_deleteSpawnLocation, g_AdminMenuFlag, "[ckSurf] Removes custom !r position");
 	RegAdminCmd("sm_clearassists", Admin_ClearAssists, g_AdminMenuFlag, "[ckSurf] Clears assist points (map progress) from all players");
+
+	// Show Triggers
+	g_Offset_m_fEffects = FindSendPropInfo("CBaseEntity", "m_fEffects");
 
 	//chat command listener
 	AddCommandListener(Say_Hook, "say");
@@ -2078,6 +2177,10 @@ public void OnPluginStart()
 	HookEvent("player_team", Event_OnPlayerTeam, EventHookMode_Post);
 	HookEvent("player_team", Event_OnPlayerTeamJoin, EventHookMode_Pre);
 	HookEvent("player_disconnect", Event_PlayerDisconnect, EventHookMode_Pre);
+	AddTempEntHook("Shotgun Shot", Hook_ShotgunShot);
+
+	// Footsteps
+	AddNormalSoundHook(Hook_FootstepCheck);
 
 	//mapcycle array
 	int arraySize = ByteCountToCells(PLATFORM_MAX_PATH);
@@ -2095,9 +2198,6 @@ public void OnPluginStart()
 
 	//button sound hook
 	//AddNormalSoundHook(NormalSHook_callback);
-
-	//nav files
-	CreateNavFiles();
 
 	// Botmimic 2
 	// https://forums.alliedmods.net/showthread.php?t=180114
@@ -2128,8 +2228,11 @@ public void OnPluginStart()
 	}
 
 	// Forwards
+	
 	g_MapFinishForward = CreateGlobalForward("ckSurf_OnMapFinished", ET_Event, Param_Cell, Param_Float, Param_String, Param_Cell, Param_Cell);
+	g_MapRecordForward = CreateGlobalForward("ckSurf_OnMapRecord", ET_Event, Param_Cell, Param_Float, Param_String, Param_String, Param_String);
 	g_BonusFinishForward = CreateGlobalForward("ckSurf_OnBonusFinished", ET_Event, Param_Cell, Param_Float, Param_String, Param_Cell, Param_Cell, Param_Cell);
+	g_BonusRecordForward = CreateGlobalForward("ckSurf_OnBonusRecord", ET_Event, Param_Cell, Param_Float, Param_String, Param_String, Param_String, Param_String);
 	g_PracticeFinishForward = CreateGlobalForward("ckSurf_OnPracticeFinished", ET_Event, Param_Cell, Param_Float, Param_String);
 
 	if (g_bLateLoaded)

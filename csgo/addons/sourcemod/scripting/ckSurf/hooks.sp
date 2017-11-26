@@ -212,25 +212,42 @@ public void PlayerSpawn(int client)
 
 public Action Say_Hook(int client, const char[] command, int argc)
 {
-	//Call Admin - Own Reason
+	// Call Admin - Own Reason
 	if (g_bClientOwnReason[client])
 	{
 		g_bClientOwnReason[client] = false;
 		return Plugin_Continue;
 	}
 
+	// read chat message and normalize it
 	char sText[1024];
 	GetCmdArgString(sText, sizeof(sText));
-
 	StripQuotes(sText);
 	TrimString(sText);
+	CRemoveColors(sText, 1024);
+	ReplaceString(sText, 1024, "%", "%%%%");
 
-	if (IsValidClient(client) && g_ClientRenamingZone[client])
+	// skip if invalid client
+	if (!IsValidClient(client))
+		return Plugin_Continue;
+
+	// forward and abort if renaming zones
+	if (g_ClientRenamingZone[client])
 	{
 		Admin_renameZone(client, sText);
 		return Plugin_Handled;
 	}
-	//TODO Make this dynamic by replicating setup in DB.
+
+	// skip if chat processing is disabled
+	if (!GetConVarBool(g_henableChatProcessing))
+		return Plugin_Continue;
+
+	// abort if message is empty
+	if (!sText[0])
+		return Plugin_Handled;
+
+	// heuristic help messages
+	// @TODO make this dynamic by replicating setup in DB.
 	if (StrContains(sText, "how", false) >= 0)
 	{
 		if (StrContains(sText, "spec", false) >= 0)
@@ -238,132 +255,115 @@ public Action Say_Hook(int client, const char[] command, int argc)
 			PrintToChatAll("%t", "SpecHelp", MOSSGREEN, g_szChatPrefix, WHITE, MOSSGREEN, WHITE, MOSSGREEN, WHITE, MOSSGREEN);
 			PrintToChat(client, "[%c%s%c] %cDoes this answer your question?", MOSSGREEN, g_szChatPrefix, WHITE, YELLOW);
 			return Plugin_Handled;
-			
 		}
 		if (StrContains(sText, "noclip", false) >= 0)
 		{
 			PrintToChatAll("%t", "NCHelp", MOSSGREEN, g_szChatPrefix, WHITE, MOSSGREEN, WHITE, MOSSGREEN, WHITE, MOSSGREEN);
 			PrintToChat(client, "[%c%s%c] %cDoes this answer your question?", MOSSGREEN, g_szChatPrefix, WHITE, YELLOW);
 			return Plugin_Handled;
-			
-		}		
+		}
 	}
-	
-	
-	if (!GetConVarBool(g_henableChatProcessing))
+
+	// abort if client is gagged (muted)
+	if (BaseComm_IsClientGagged(client))
+		return Plugin_Handled;
+
+	// lowercase commands if first character is uppercase
+	if ((sText[0] == '/' || sText[0] == '!') && IsCharUpper(sText[1]))
+	{
+		for (int i = 0; i <= strlen(sText); ++i)
+		{
+			if ((sText[i] == ' '))
+				break; // only lowercase command (no arguments)
+			sText[i] = CharToLower(sText[i]);
+		}
+		FakeClientCommand(client, "say %s", sText);
+		return Plugin_Handled;
+	}
+
+	// abort if client invoked hidden chat command (hidden_chat_commands.txt)
+	char commandlookup[128][128];
+	ExplodeString(sText, " ", commandlookup, 1, 128);
+	for (int i = 0; i < sizeof(g_BlockedChatText); i++)
+		if (StrEqual(g_BlockedChatText[i], commandlookup[0], false))
+			return Plugin_Handled;
+
+	// check spam (warns/kicks spamming players), should be after blocked commands (for !r, etc.)
+	if (checkSpam(client))
+		return Plugin_Handled;
+
+	// final normalize (remove colors)
+	normalizeChatString(sText, 1024);
+
+	// skip if chat trigger
+	if ((IsChatTrigger() && sText[0] == '/') || (sText[0] == '@'))
 		return Plugin_Continue;
 
-	if (IsValidClient(client))
+	// get player name and normalize it
+	char szName[64];
+	Format(szName, sizeof(szName), "%N", client);
+	normalizeChatString(szName, 64);
+
+	// log the chat of the player to the server so that tools such as HLSW/HLSTATX see it and also it remains logged in the log file
+	WriteChatLog(client, "say", sText);
+	PrintToServer("%s: %s", szName, sText);
+
+	// build final message string with colors, ranks, etc.
+	char sTextFinal[1024];
+	bool bHasSpecialRank = StrEqual(g_pr_rankname[client], "ADMIN", false) && GetConVarBool(g_hAdminClantag);
+	bool bUseChatRank = GetConVarBool(g_hPointSystem) || bHasSpecialRank;
+	bool bUseCountry = GetConVarBool(g_hCountry);
+
+	// get colored chat rank
+	char szChatRank[64];
+	Format(szChatRank, 64, "%s", g_pr_chat_coloredrank[client]);
+
+	// color player name based on rank if enabled
+	if (GetConVarBool(g_hPointSystem) && GetConVarBool(g_hColoredNames))
+		Format(szName, sizeof(szName), "%s%s", g_pr_rankColor[client], szName);
+
+	// build: country code
+	if (bUseCountry)
 	{
-		if (client > 0)
-			if (BaseComm_IsClientGagged(client))
-			return Plugin_Handled;
-
-		//blocked commands
-		for (int i = 0; i < sizeof(g_BlockedChatText); i++)
-		{
-			if (StrEqual(g_BlockedChatText[i], sText, true))
-			{
-
-				return Plugin_Handled;
-			}
-		}		
-
-		// !s and !stage commands
-		if (StrContains(sText, "!s", false) == 0 || StrContains(sText, "!stage", false) == 0)
-			return Plugin_Handled;
-
-		// !b and !bonus commands
-		if (StrContains(sText, "!b", false) == 0 || StrContains(sText, "!bonus", false) == 0)
-			return Plugin_Handled;
-
-		//empty message
-		if (StrEqual(sText, " ") || !sText[0])
-			return Plugin_Handled;
-
-		if (checkSpam(client))
-			return Plugin_Handled;
-
-		normalizeChatString(sText, 1024);
-
-		//lowercase
-		if ((sText[0] == '/') || (sText[0] == '!'))
-		{
-			if (IsCharUpper(sText[1]))
-			{
-				for (int i = 0; i <= strlen(sText); ++i)
-					sText[i] = CharToLower(sText[i]);
-				FakeClientCommand(client, "say %s", sText);
-				return Plugin_Handled;
-			}
-		}
-
-		//chat trigger?
-		if ((IsChatTrigger() && sText[0] == '/') || (sText[0] == '@' /*&& (GetUserFlagBits(client) & ADMFLAG_ROOT || GetUserFlagBits(client) & ADMFLAG_GENERIC)*/))
-		{
-			return Plugin_Continue;
-		}
-
-		char szName[64];
-		Format(szName,sizeof(szName),"%N",client);
-
-		//GetClientName(client, szName, 64);
-
-		//log the chat of the player to the server so that tools such as HLSW/HLSTATX see it and also it remains logged in the log file
-		WriteChatLog(client, "say", sText);
-		PrintToServer("%s: %s", szName, sText);
-
-		normalizeChatString(szName, 64);
-
-		if (GetConVarBool(g_hPointSystem) && GetConVarBool(g_hColoredNames))
-		{
-			Format(szName,sizeof(szName),"%s%s",g_pr_rankColor[client],szName);
-		}
-
-		if (GetClientTeam(client) == 1)
-		{
-			PrintSpecMessageAll(client);
-			return Plugin_Handled;
-		}
-		else
-		{
-			char szChatRank[64];
-			Format(szChatRank, 64, "%s", g_pr_chat_coloredrank[client]);
-
-			if (GetConVarBool(g_hCountry) && (GetConVarBool(g_hPointSystem) || (StrEqual(g_pr_rankname[client], "ADMIN", false) && GetConVarBool(g_hAdminClantag))))
-			{
-				if (IsPlayerAlive(client))
-					CPrintToChatAll("{green}%s{default} %s {teamcolor}%s{default}: %s", g_szCountryCode[client], szChatRank, szName, sText);
-				else
-					CPrintToChatAll("{green}%s{default} %s {teamcolor}*DEAD* %s{default}: %s", g_szCountryCode[client], szChatRank, szName, sText);
-				return Plugin_Handled;
-			}
-			else
-			{
-				if (GetConVarBool(g_hPointSystem) || ((StrEqual(g_pr_rankname[client], "ADMIN", false)) && GetConVarBool(g_hAdminClantag)))
-				{
-					if (IsPlayerAlive(client))
-						CPrintToChatAll("%s {default}%s{default}: %s", szChatRank, szName, sText);
-					else
-						CPrintToChatAll("%s {default}*DEAD* %s{default}: %s", szChatRank, szName, sText);
-					return Plugin_Handled;
-				}
-				else if (GetConVarBool(g_hCountry))
-				{
-					if (IsPlayerAlive(client))
-						CPrintToChatAll("[{green}%s{default}] {default}%s{default}: %s", g_szCountryCode[client], szName, sText);
-					else
-						CPrintToChatAll("[{green}%s{default}] {default}*DEAD* %s{default}: %s", g_szCountryCode[client], szName, sText);
-					return Plugin_Handled;
-				}
-			}
-		}
+		Format(sTextFinal, sizeof(sTextFinal), "{green}%s{default}", g_szCountryCode[client]);
+		if (!bUseChatRank)
+			Format(sTextFinal, sizeof(sTextFinal), "[%s]", sTextFinal);
 	}
-	return Plugin_Continue;
+
+	// build: rank
+	if (bUseChatRank)
+		Format(sTextFinal, sizeof(sTextFinal), "%s {default}%s{default}", sTextFinal, szChatRank);
+
+	// build: spec/death inserts
+	if (GetClientTeam(client) == CS_TEAM_SPECTATOR)
+		Format(sTextFinal, sizeof(sTextFinal), "%s {default}%s", sTextFinal, "*SPEC*");
+	else if (!IsPlayerAlive(client))
+		Format(sTextFinal, sizeof(sTextFinal), "%s {default}%s", sTextFinal, "*DEAD*");
+
+	// build: player name & message
+	if (GetClientTeam(client) == CS_TEAM_SPECTATOR)
+		Format(sTextFinal, sizeof(sTextFinal), "%s {grey}%s{default}: %s", sTextFinal, szName, sText);
+	else
+		Format(sTextFinal, sizeof(sTextFinal), "%s {default}%s{default}: %s", sTextFinal, szName, sText);
+
+	// print message to chat
+	CPrintToChatAll("%s", sTextFinal);
+
+	// print message to player consoles
+	normalizeChatString(sTextFinal, sizeof(sTextFinal));
+	for (int i = 1; i <= MaxClients; i++)
+	{
+		if (!IsValidClient(i)) continue;
+		PrintToConsole(i, "%s", sTextFinal);
+	}
+
+	// all done :)
+	return Plugin_Handled;
 }
 
 public Action Event_OnPlayerTeamJoin(Event event, const char[] name, bool dontBroadcast)
 {
+	
 	if(!g_hAnnouncePlayers.BoolValue)
 	{
 		if(!GetEventBool(event, "silent"))
@@ -376,6 +376,11 @@ public Action Event_OnPlayerTeamJoin(Event event, const char[] name, bool dontBr
 
 public Action Event_OnPlayerTeam(Event event, const char[] name, bool dontBroadcast)
 {
+	if(!botsLoaded)
+	{
+		botFix();
+		botsLoaded = true;
+	}
 	int client = GetClientOfUserId(event.GetInt("userid"));
 	if (!IsValidClient(client) || IsFakeClient(client))
 		return Plugin_Continue;
@@ -582,8 +587,12 @@ public Action OnLogAction(Handle source, Identity ident, int client, int target,
 		else
 			Format(logtag, sizeof(logtag), "OTHER");
 
-		if ((strcmp("playercommands.smx", logtag, false) == 0) || (strcmp("slap.smx", logtag, false) == 0))
+		if ((strcmp("playercommands.smx", logtag, false) == 0) || (strcmp("slap.smx", logtag, false) == 0) || (strcmp("funcommands.smx", logtag, false) == 0))
+		{
+			SetEntityGravity(client, 0.00); 
+			PrintToChat(client, "[%c%s%c] Your time has been stopped to prevent abuse.", MOSSGREEN, g_szChatPrefix, WHITE);
 			Client_Stop(target, 0);
+		}
 	}
 	return Plugin_Continue;
 }
@@ -811,4 +820,51 @@ public MRESReturn DHooks_OnTeleport(int client, Handle hParams)
 public void Hook_PostThinkPost(int entity)
 {
 	SetEntProp(entity, Prop_Send, "m_bInBuyZone", 0);
+}
+
+public Action Hook_SetTriggerTransmit(int entity, int client)
+{
+	if (!g_bShowTriggers[client])
+	{
+		// I will not display myself to this client :(
+		return Plugin_Handled;
+	}
+	return Plugin_Continue;
+}
+public Action Hook_FootstepCheck(int clients[64], int &numClients, char sample[PLATFORM_MAX_PATH], int &entity, int &channel, float &volume, int &level, int &pitch, int &flags) 
+{
+	// Player
+  if (0 < entity <= MaxClients)
+  {
+		if (StrContains(sample, "land") != -1 || StrContains(sample, "suit_") != -1 || StrContains(sample, "knife") != -1)
+			return Plugin_Handled;
+
+		if (StrContains(sample, "footsteps") != -1 || StrContains(sample, "physics") != -1)
+		{
+			numClients = 1;
+			clients[0] = entity;
+			for (int i = 1; i <= MaxClients; i++)
+			{
+				if (IsValidClient(i) && !IsPlayerAlive(i))
+				{
+					int SpecMode = GetEntProp(i, Prop_Send, "m_iObserverMode");
+					if (SpecMode == 4 || SpecMode == 5)
+					{
+						int Target = GetEntPropEnt(i, Prop_Send, "m_hObserverTarget");
+						if (Target == entity)
+							clients[numClients++] = i;
+					}
+				}
+			}
+			EmitSound(clients, numClients, sample, entity);
+			//return Plugin_Changed;
+
+			return Plugin_Stop;
+		}
+  }
+  return Plugin_Continue;
+}
+public Action Hook_ShotgunShot(const char[] te_name, const int[] players, int numClients, float delay) 
+{
+	return Plugin_Handled;
 }

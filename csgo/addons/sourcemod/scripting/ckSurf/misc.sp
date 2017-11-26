@@ -82,16 +82,21 @@ int IsInsideZone (float location[3], float extraSize = 0.0)
 
 public void loadAllClientSettings()
 {
+	debug_msg(" Started loadAllClientSettings ");
 	for (int i = 1; i < MAXPLAYERS + 1; i++)
 	{
 		if (IsValidClient(i) && !IsFakeClient(i) && !g_bSettingsLoaded[i] && !g_bLoadingSettings[i])
 		{
+			char buffer[412];
+			Format(buffer, 412, "Started Loading: %N on map: %s", i, g_szMapName);
+			debug_msg(buffer);
 			db_viewPersonalRecords(i, g_szSteamID[i], g_szMapName);
 			g_bLoadingSettings[i] = true;
+			
 			break;
 		}
 	}
-
+	debug_msg(" Ended loadAllClientSettings ");
 	g_bServerDataLoaded = true;
 }
 public void getSteamIDFromClient(int client, char[] buffer, int length)
@@ -597,16 +602,43 @@ public bool loadCustomTitles()
 	return true;
 }
 
+
+public bool loadCustomSounds()
+{
+
+	char sPath[PLATFORM_MAX_PATH];
+	
+	BuildPath(Path_SM, sPath, sizeof(sPath), "%s", CUSTOM_SOUND);
+
+	Handle kv = CreateKeyValues("Custom Sounds");
+	FileToKeyValues(kv, sPath);
+	
+	if (!KvGotoFirstSubKey(kv))
+	{
+		
+		return false;
+	}
+
+	for (int i = 0; i < SOUND_COUNT; i++)
+	{
+		
+		KvGetString(kv, "sound_path", g_szSoundPath[i], 128);
+		KvGetString(kv, "sound_name", g_szSoundName[i], 128);
+		g_iSoundCost[i] = KvGetNum(kv, "sound_cost");
+		g_iSoundType[i] = KvGetNum(kv, "sound_type");
+		g_iSoundPerm[i] = KvGetNum(kv, "sound_perm");
+		
+		
+		if (!KvGotoNextKey(kv))
+			break;
+	}
+	CloseHandle(kv);
+	return true;
+}
+
 public void normalizeChatString(char[] ParseString, int size)
 {
-	//players are using special ASCII chars to simulate 0x** colors
-	//this will prevent it by replacing ASCII characters outside of the normal range with a space
-	//CTag comes from colors.inc
-	for (int i = 0 ; i < MAX_COLORS ; i++)
-	{
-		ReplaceString(ParseString, size, CTag[i], "", false);
-		ReplaceString(ParseString, size, CTagCode[i],"",false);
-	}
+	CRemoveColors(ParseString, size);
 }
 
 public void checkChangesInTitle(int client)
@@ -881,6 +913,9 @@ public void PrintConsoleInfo(int client)
 
 	PrintToConsole(client, "-----------------------------------------------------------------------------------------------------------");
 	PrintToConsole(client, "This server is running ckSurf v%s - Author: Elzi - Server tickrate: %i", PLUGIN_VERSION, RoundToNearest(fltickrate));
+	#if defined DEV_BUILD 
+		PrintToConsole(client, "THIS PLUGIN VERSION IS A DEVELOPEMNT BUILD. IT SHOULD NOT BE USED IN PRODUCTION");
+	#endif
 	PrintToConsole(client, "This version of ckSurf has been modfied by: jonitaikaponi, nikooo777, connorjan, blackhawk74, ");
 	PrintToConsole(client, "zAfLu, Squallkins, marcowmadeira, 2called-chaos, 1DJ, Maxximou5, peace-maker.");
 	if (iConsoleTimeleft > 0)
@@ -907,7 +942,6 @@ public void PrintConsoleInfo(int client)
 	PrintToConsole(client, "Kills: Time in seconds");
 	PrintToConsole(client, "Assists: Number of % finished on current map");
 	PrintToConsole(client, "Score: How many players are lower ranked than the player. Higher number means higher rank");
-	PrintToConsole(client, "MVP Stars: Number of finished map runs on the current map");
 	PrintToConsole(client, " ");
 	PrintToConsole(client, "Practice Mode:");
 	PrintToConsole(client, "Create checkpoints with !cp / !checkpoint");
@@ -1046,7 +1080,7 @@ public void PlayButtonSound(int client)
 	{
 		char buffer[255];
 		GetConVarString(g_hSoundPath, buffer, 255);
-		Format(buffer, sizeof(buffer), "play *%s", buffer);
+		Format(buffer, sizeof(buffer), "play %s", buffer);
 		ClientCommand(client, buffer);
 	}
 
@@ -1063,7 +1097,7 @@ public void PlayButtonSound(int client)
 				{
 					char szsound[255];
 					GetConVarString(g_hSoundPath, szsound, 256);
-					Format(szsound, sizeof(szsound), "play *%s", szsound);
+					Format(szsound, sizeof(szsound), "play %s", szsound);
 					ClientCommand(i, szsound);
 				}
 			}
@@ -1423,6 +1457,12 @@ public void SetClientDefaults(int client)
 	g_bViewModel[client] = true;
 	g_bCheckpointsEnabled[client] = true;
 	g_bEnableQuakeSounds[client] = true;
+	g_orgSrSoundId[client] = 0; 
+  	g_orgBrSoundId[client] = 1; 
+  	g_orgBeatSoundId[client] = 2; 
+
+	g_bShowTriggers[client] = false;
+	g_fCommandLastUsed[client] = 0.0;
 }
 
 public void clearPlayerCheckPoints(int client)
@@ -1465,69 +1505,73 @@ public void SetCashState()
 	}
 }
 
-public void PlayRecordSound(int iRecordtype)
+public void PlayRecordSound(int iRecordtype, int client)
 {
 	char buffer[255];
-	if (iRecordtype == 1)
+	if (iRecordtype == 0)
 	{
 		for (int i = 1; i <= GetMaxClients(); i++)
 		{
 			if (IsValidClient(i) && !IsFakeClient(i) && g_bEnableQuakeSounds[i] == true)
 			{
-				Format(buffer, sizeof(buffer), "play *%s", g_szSoundRecordBonus);
+				Format(buffer, sizeof(buffer), "play *%s", g_szSoundPath[g_SrSoundId[client]]);
 				ClientCommand(i, buffer);
 			}
 		}
 	}
-	else
-		if (iRecordtype == 2)
+	else if (iRecordtype == 1)
 	{
 		for (int i = 1; i <= GetMaxClients(); i++)
 		{
 			if (IsValidClient(i) && !IsFakeClient(i) && g_bEnableQuakeSounds[i] == true)
 			{
-				Format(buffer, sizeof(buffer), "play *%s", g_szSoundRecordMap);
+				Format(buffer, sizeof(buffer), "play *%s", g_szSoundPath[g_BrSoundId[client]]);
 				ClientCommand(i, buffer);
 			}
 		}
 	}
-}
-
-public void PlayUnstoppableSound(int client)
-{
-	char buffer[255];
-	Format(buffer, sizeof(buffer), "play *%s", g_szSoundRecordBeat);
-	if (!IsFakeClient(client) && g_bEnableQuakeSounds[client])
-		ClientCommand(client, buffer);
-	//spec stop sound
-	for (int i = 1; i <= MaxClients; i++)
+	else if  (iRecordtype == 2)
 	{
-		if (IsValidClient(i) && !IsPlayerAlive(i))
+		Format(buffer, sizeof(buffer), "play *%s", g_szSoundPath[g_BeatSoundId[client]]);
+		if (!IsFakeClient(client) && g_bEnableQuakeSounds[client])
+			ClientCommand(client, buffer);
+		//spec stop sound
+		for (int i = 1; i <= MaxClients; i++)
 		{
-			int SpecMode = GetEntProp(i, Prop_Send, "m_iObserverMode");
-			if (SpecMode == 4 || SpecMode == 5)
+			if (IsValidClient(i) && !IsPlayerAlive(i))
 			{
-				int Target = GetEntPropEnt(i, Prop_Send, "m_hObserverTarget");
-				if (Target == client && g_bEnableQuakeSounds[i])
-					ClientCommand(i, buffer);
+				int SpecMode = GetEntProp(i, Prop_Send, "m_iObserverMode");
+				if (SpecMode == 4 || SpecMode == 5)
+				{
+					int Target = GetEntPropEnt(i, Prop_Send, "m_hObserverTarget");
+					if (Target == client && g_bEnableQuakeSounds[i])
+						ClientCommand(i, buffer);
+				}
 			}
 		}
 	}
+	
 }
 
 public void InitPrecache()
 {
-	g_hSoundRecordBonus.GetString(g_szSoundRecordBonus, sizeof(g_szSoundRecordBonus));
-	g_hSoundRecordMap.GetString(g_szSoundRecordMap, sizeof(g_szSoundRecordMap));
-	g_hSoundRecordBeat.GetString(g_szSoundRecordBeat, sizeof(g_szSoundRecordBeat));
-
-	AddSoundToDownloadsTable(g_szSoundRecordBeat);
-	FakePrecacheSound(g_szSoundRecordBeat);
-	AddSoundToDownloadsTable(g_szSoundRecordMap);
-	FakePrecacheSound(g_szSoundRecordMap);
-	AddSoundToDownloadsTable(g_szSoundRecordBonus);
-	FakePrecacheSound(g_szSoundRecordBonus);
-
+	
+	g_iCustomSoundCount = 0;
+	for (int i = 0; i < sizeof(g_szSoundPath); i++)
+	{
+		char path[128];
+		Format(path, 128, g_szSoundPath[i]);
+		
+		if(path[0] != EOS)
+		{
+			g_iCustomSoundCount++;
+  			char abspath[128];
+  			Format(abspath, 128, "%s", g_szSoundPath[i]);
+  			AddSoundToDownloadsTable(abspath);
+			FakePrecacheSound(abspath);
+  		}
+	}
+	
 	char szBuffer[256];
 	// Replay Player Model
 	GetConVarString(g_hReplayBotPlayerModel, szBuffer, 256);
@@ -1546,8 +1590,8 @@ public void InitPrecache()
 	AddFileToDownloadsTable(szBuffer);
 	PrecacheModel(szBuffer, true);
 
-	g_BeamSprite = PrecacheModel("materials/sprites/laserbeam.vmt", true);
-	g_HaloSprite = PrecacheModel("materials/sprites/halo.vmt", true);
+ 	g_BeamSprite = PrecacheModel("materials/sprites/laserbeam.vmt", true); 
+ 	g_HaloSprite = PrecacheModel("materials/sprites/halo.vmt", true); 
 	PrecacheModel(ZONE_MODEL);
 }
 
@@ -1610,6 +1654,7 @@ stock void MapFinishedMsgs(int client, int rankThisRun = 0)
 			(GetConVarInt(g_hAnnounceRecord) == 2 && g_bMapSRVRecord[client])) &&
 			(rankThisRun <= GetConVarInt(g_hAnnounceRank) || GetConVarInt(g_hAnnounceRank) == 0))
 		{
+			bool sent = false;
 			for (int i = 1; i <= GetMaxClients(); i++)
 			{
 				if (IsValidClient(i) && !IsFakeClient(i))
@@ -1622,7 +1667,7 @@ stock void MapFinishedMsgs(int client, int rankThisRun = 0)
 					else
 						if (g_bMapPBRecord[client]) // Own record
 						{
-							PlayUnstoppableSound(client);
+							PlayRecordSound(2, client);
 							PrintToChat(i, "%t", "MapFinished3", MOSSGREEN, g_szChatPrefix, WHITE, LIMEGREEN, szName, GRAY, DARKBLUE, GRAY, LIMEGREEN, g_szFinalTime[client], GRAY, GREEN, g_szTimeDifference[client], GRAY, WHITE, LIMEGREEN, g_MapRank[client], WHITE, count, LIMEGREEN, g_szRecordMapTime, WHITE);
 							PrintToConsole(i, "%s finished the map with a time of (%s). Improving their best time by (%s).  [rank #%i/%i | record %s]", szName, g_szFinalTime[client], g_szTimeDifference[client], g_MapRank[client], count, g_szRecordMapTime);
 						}
@@ -1632,15 +1677,36 @@ stock void MapFinishedMsgs(int client, int rankThisRun = 0)
 								PrintToChat(i, "%t", "MapFinished5", MOSSGREEN, g_szChatPrefix, WHITE, LIMEGREEN, szName, GRAY, DARKBLUE, GRAY, LIMEGREEN, g_szFinalTime[client], GRAY, RED, g_szTimeDifference[client], GRAY, WHITE, LIMEGREEN, g_MapRank[client], WHITE, count, LIMEGREEN, g_szRecordMapTime, WHITE);
 								PrintToConsole(i, "%s finished the map with a time of (%s). Missing their best time by (%s).  [rank #%i/%i | record %s]", szName, g_szFinalTime[client], g_szTimeDifference[client], g_MapRank[client], count, g_szRecordMapTime);
 							}
-
+					
 					if (g_bMapSRVRecord[client])
 					{
-						PlayRecordSound(2);
+						
 						PrintToChat(i, "%t", "NewMapRecord", MOSSGREEN, g_szChatPrefix, WHITE, LIMEGREEN, szName, GRAY, DARKBLUE);
 						PrintToConsole(i, "[%s] %s scored a new MAP RECORD", g_szChatPrefix, szName);
-						char FancyMsg[64]; 
-						Format(FancyMsg, 64, "[%s] %s has beaten the MAP RECORD", g_szChatPrefix, szName);
-						LchatSR(FancyMsg);
+						if(!sent)
+						{
+							PlayRecordSound(0, client);
+							char FancyMsg[64]; 
+							Format(FancyMsg, 64, "[%s] %s has beaten the MAP RECORD", g_szChatPrefix, szName);
+							LchatSR(FancyMsg);
+							//Integration for Discord Module:
+							/* Start function call */
+							Call_StartForward(g_MapRecordForward);
+	
+							/* Push parameters one at a time */
+							Call_PushCell(client);
+							Call_PushFloat(g_fFinalTime[client]);
+							Call_PushString(g_szFinalTime[client]);
+							Call_PushString(g_szMapName);
+							Call_PushString(g_szServerNameBrowser);
+	
+							/* Finish the call, get the result */
+							Call_Finish();
+							sent = true;
+						}
+						
+						
+						
 					}
 				}
 			}
@@ -1657,7 +1723,7 @@ stock void MapFinishedMsgs(int client, int rankThisRun = 0)
 				{
 					if (g_bMapPBRecord[client])
 					{
-						PlayUnstoppableSound(client);
+						PlayRecordSound(2, client);
 						PrintToChat(client, "%t", "MapFinished3", MOSSGREEN, g_szChatPrefix, WHITE, LIMEGREEN, szName, GRAY, DARKBLUE, GRAY, LIMEGREEN, g_szFinalTime[client], GRAY, GREEN, g_szTimeDifference[client], GRAY, WHITE, LIMEGREEN, g_MapRank[client], WHITE, count, LIMEGREEN, g_szRecordMapTime, WHITE);
 						PrintToConsole(client, "%s finished the map with a time of (%s). Improving their best time by (%s).  [rank #%i/%i | record %s]", szName, g_szFinalTime[client], g_szTimeDifference[client], g_MapRank[client], count, g_szRecordMapTime);
 					}
@@ -1701,64 +1767,7 @@ stock void MapFinishedMsgs(int client, int rankThisRun = 0)
 	return;
 }
 
-void LchatSR(const char[] message)
-{		
-		
-	for (int i = 1; i <= MaxClients; i++)
-	{
-		if (!IsClientInGame(i) || IsFakeClient(i))
-		{
-			continue;
-		}
-
-		HudMessage(i, "255 0 255", "0 255 48", "2",  "3", message, "-1.0", "0.93", "0.05", "0.05", "15.0");
-		HudMessage(i, "255 0 255", "0 255 48", "2",  "3", message, "-1.0", "0.13", "0.05", "0.05", "15.0");
-	
-	}
-}
-void LchatBR(const char[] message)
-{		
-		
-	for (int i = 1; i <= MaxClients; i++)
-	{
-		if (!IsClientInGame(i) || IsFakeClient(i))
-		{
-			continue;
-		}
-
-		HudMessage(i, "21 147 237", "255 165 0", "2",  "3", message, "-1.0", "0.93", "0.05", "0.05", "15.0");
-		HudMessage(i, "21 147 237", "255 165 0", "2",  "3", message, "-1.0", "0.13", "0.05", "0.05", "15.0");
-	
-	}
-}
-
-void HudMessage(int client, const char[] color,const char[] color2, const char[] effect, const char[] channel, const char[] message, const char[] posx, const char[] posy, const char[] fadein, const char[] fadeout, const char[] holdtime)
-{
-	
-  if(IsValidEntity(iGameText) == false)
-  {
-    iGameText = CreateEntityByName("game_text");
-  }
-  DispatchKeyValue(iGameText, "channel", channel);
-  DispatchKeyValue(iGameText, "color", color);
-  DispatchKeyValue(iGameText, "color2", color2);
-  DispatchKeyValue(iGameText, "effect", effect);
-  DispatchKeyValue(iGameText, "fadein", fadein);
-  DispatchKeyValue(iGameText, "fadeout", fadeout);
-  DispatchKeyValue(iGameText, "fxtime", "0.25");
-  DispatchKeyValue(iGameText, "holdtime", holdtime);
-  DispatchKeyValue(iGameText, "message", message);
-  DispatchKeyValue(iGameText, "spawnflags", "0");
-  DispatchKeyValue(iGameText, "x", posx);
-  DispatchKeyValue(iGameText, "y", posy);
-  DispatchSpawn(iGameText);
-  SetVariantString("!activator");
-  AcceptEntityInput(iGameText,"display",client);
-
-}
-
-
-stock void PrintChatBonus (int client, int zGroup, int rank = 0)
+stock void PrintChatBonus(int client, int zGroup, int rank = 0)
 {
 	if (!IsValidClient(client))
 		return;
@@ -1777,7 +1786,7 @@ stock void PrintChatBonus (int client, int zGroup, int rank = 0)
 	{
 		if (g_bBonusSRVRecord[client])
 		{
-			PlayRecordSound(1);
+			PlayRecordSound(1, client);
 			
 			RecordDiff = g_fOldBonusRecordTime[zGroup] - g_fFinalTime[client];
 			FormatTimeFloat(client, RecordDiff, 3, szRecordDiff, 54);
@@ -1789,6 +1798,22 @@ stock void PrintChatBonus (int client, int zGroup, int rank = 0)
 			char FancyMsg[64]; 
 			Format(FancyMsg, 64, "[%s] %s has beaten the %s RECORD", g_szChatPrefix, szName, g_szZoneGroupName[zGroup]);
 			LchatBR(FancyMsg);
+			
+			//Integration for Discord Module:
+			/* Start function call */
+			Call_StartForward(g_BonusRecordForward);
+				
+			/* Push parameters one at a time */
+			Call_PushCell(client);
+			Call_PushFloat(g_fFinalTime[client]);
+			Call_PushString(g_szFinalTime[client]);
+			Call_PushString(g_szMapName);
+			Call_PushString(g_szServerNameBrowser);
+			Call_PushString(g_szZoneGroupName[zGroup]);
+			/* Finish the call, get the result */
+			Call_Finish();
+			
+			
 			if (g_tmpBonusCount[zGroup] == 0)
 				PrintToChatAll("%t", "BonusFinished3", MOSSGREEN, g_szChatPrefix, WHITE, LIMEGREEN, szName, GRAY, YELLOW, g_szZoneGroupName[zGroup], GRAY, LIMEGREEN, g_szFinalTime[client], GRAY, LIMEGREEN, WHITE, LIMEGREEN, g_szFinalTime[client], WHITE);
 			else
@@ -1800,11 +1825,27 @@ stock void PrintChatBonus (int client, int zGroup, int rank = 0)
 			char FancyMsg[64]; 
 			Format(FancyMsg, 64, "[%s] %s has beaten the %s RECORD", g_szChatPrefix, szName, g_szZoneGroupName[zGroup]);
 			LchatBR(FancyMsg);
+			
+			//Integration for Discord Module:
+			/* Start function call */
+			Call_StartForward(g_BonusRecordForward);
+				
+			/* Push parameters one at a time */
+			Call_PushCell(client);
+			Call_PushFloat(g_fFinalTime[client]); 
+			Call_PushString(g_szFinalTime[client]);
+			Call_PushString(g_szMapName);
+			Call_PushString(g_szServerNameBrowser);
+			Call_PushString(g_szZoneGroupName[zGroup]);
+			/* Finish the call, get the result */
+			Call_Finish();
+			
+			
 			PrintToChatAll("%t", "BonusFinished5", MOSSGREEN, g_szChatPrefix, WHITE, LIMEGREEN, szName, GRAY, YELLOW, g_szZoneGroupName[zGroup], GRAY, LIMEGREEN, g_szFinalTime[client], GRAY, LIMEGREEN, szRecordDiff, GRAY, LIMEGREEN, g_MapRankBonus[zGroup][client], GRAY, g_iBonusCount[zGroup], LIMEGREEN, g_szFinalTime[client], WHITE);
 		}
 		if (g_bBonusPBRecord[client] && !g_bBonusSRVRecord[client])
 		{
-			PlayUnstoppableSound(client);
+			PlayRecordSound(2, client);
 			PrintToChatAll("%t", "BonusFinished6", MOSSGREEN, g_szChatPrefix, WHITE, LIMEGREEN, szName, GRAY, YELLOW, g_szZoneGroupName[zGroup], GRAY, LIMEGREEN, g_szFinalTime[client], GRAY, LIMEGREEN, g_szBonusTimeDifference[client], GRAY, LIMEGREEN, g_MapRankBonus[zGroup][client], GRAY, g_iBonusCount[zGroup], LIMEGREEN, g_szBonusFastestTime[zGroup], WHITE);
 		}
 		if (g_bBonusFirstRecord[client] && !g_bBonusSRVRecord[client])
@@ -1820,7 +1861,7 @@ stock void PrintChatBonus (int client, int zGroup, int rank = 0)
 	{
 		if (g_bBonusSRVRecord[client])
 		{
-			PlayRecordSound(1);
+			PlayRecordSound(1, client);
 			RecordDiff = g_fOldBonusRecordTime[zGroup] - g_fFinalTime[client];
 			FormatTimeFloat(client, RecordDiff, 3, szRecordDiff, 54);
 			Format(szRecordDiff, 54, "-%s", szRecordDiff);
@@ -1840,7 +1881,7 @@ stock void PrintChatBonus (int client, int zGroup, int rank = 0)
 		}
 		if (g_bBonusPBRecord[client] && !g_bBonusSRVRecord[client])
 		{
-			PlayUnstoppableSound(client);
+			PlayRecordSound(2 , client);
 			PrintToChat(client, "%t", "BonusFinished6", MOSSGREEN, g_szChatPrefix, WHITE, LIMEGREEN, szName, GRAY, YELLOW, g_szZoneGroupName[zGroup], GRAY, LIMEGREEN, g_szFinalTime[client], GRAY, LIMEGREEN, g_szBonusTimeDifference[client], GRAY, LIMEGREEN, g_MapRankBonus[zGroup][client], GRAY, g_iBonusCount[zGroup], LIMEGREEN, g_szBonusFastestTime[zGroup], WHITE);
 		}
 		if (g_bBonusFirstRecord[client] && !g_bBonusSRVRecord[client])
@@ -1876,6 +1917,36 @@ stock void PrintChatBonus (int client, int zGroup, int rank = 0)
 		PrintToChat(client, "[%c%s%c] %cFailed to save your data correctly! Please contact an admin.", MOSSGREEN, g_szChatPrefix, WHITE, DARKRED, RED, DARKRED);
 
 	return;
+}
+
+void LchatSR(const char[] message)
+{		
+		
+	for (int i = 1; i <= MaxClients; i++)
+	{
+		if (!IsClientInGame(i) || IsFakeClient(i))
+		{
+			continue;
+		}
+		ClearSyncHud(i, g_hHudSync);
+		SetHudTextParams(-1.0, 0.13, 10.0, 107, 244, 66, 255, 2, 0.1, 0.1, 0.1);
+		ShowSyncHudText(i, g_hHudSync, "%s", message);
+	
+	}
+}
+void LchatBR(const char[] message)
+{		
+		
+	for (int i = 1; i <= MaxClients; i++)
+	{
+		if (!IsClientInGame(i) || IsFakeClient(i))
+		{
+			continue;
+		}
+		ClearSyncHud(i, g_hHudSync);
+		SetHudTextParams(-1.0, 0.13, 10.0, 200, 2, 255, 255, 2, 0.1, 0.1, 0.1);
+		ShowSyncHudText(i, g_hHudSync, "%s", message);
+	}
 }
 
 public void CheckMapRanks(int client)
@@ -2250,52 +2321,6 @@ public int GetSkillgroupFromPoints(int points)
 	return 0;
 }
 
-stock Action PrintSpecMessageAll(int client)
-{
-	char szName[64];
-	GetClientName(client, szName, sizeof(szName));
-	normalizeChatString(szName, 64);
-
-	char szTextToAll[1024];
-	GetCmdArgString(szTextToAll, sizeof(szTextToAll));
-	StripQuotes(szTextToAll);
-	if (StrEqual(szTextToAll, "") || StrEqual(szTextToAll, " ") || StrEqual(szTextToAll, "  "))
-		return Plugin_Handled;
-
-	normalizeChatString(szTextToAll, 1024);
-	char szChatRank[64];
-	Format(szChatRank, 64, "%s", g_pr_chat_coloredrank[client]);
-
-	if (GetConVarBool(g_hPointSystem) && GetConVarBool(g_hColoredNames))
-		Format(szName,sizeof(szName),"%s%s",g_pr_rankColor[client],szName);
-
-	if (GetConVarBool(g_hCountry) && (GetConVarBool(g_hPointSystem) || ((StrEqual(g_pr_rankname[client], "ADMIN", false)) && GetConVarBool(g_hAdminClantag))))
-		CPrintToChatAll("{green}%s{default} %s *SPEC* {grey}%s{default}: %s", g_szCountryCode[client], szChatRank, szName, szTextToAll);
-	else
-		if (GetConVarBool(g_hPointSystem) || ((StrEqual(g_pr_rankname[client], "ADMIN", false)) && GetConVarBool(g_hAdminClantag)))
-			CPrintToChatAll("%s *SPEC* {grey}%s{default}: %s", szChatRank, szName, szTextToAll);
-		else
-			if (GetConVarBool(g_hCountry))
-				CPrintToChatAll("[{green}%s{default}] *SPEC* {grey}%s{default}: %s", g_szCountryCode[client], szName, szTextToAll);
-			else
-				CPrintToChatAll("*SPEC* {grey}%s{default}: %s", szName, szTextToAll);
-
-	for (int i = 1; i <= MaxClients; i++)
-		if (IsValidClient(i))
-		{
-			if (GetConVarBool(g_hCountry) && (GetConVarBool(g_hPointSystem) || ((StrEqual(g_pr_rankname[client], "ADMIN", false)) && GetConVarBool(g_hAdminClantag))))
-				PrintToConsole(i, "%s [%s] *SPEC* %s: %s", g_szCountryCode[client], g_pr_rankname[client], szName, szTextToAll);
-			else
-				if (GetConVarBool(g_hPointSystem) || ((StrEqual(g_pr_rankname[client], "ADMIN", false)) && GetConVarBool(g_hAdminClantag)))
-					PrintToConsole(i, "[%s] *SPEC* %s: %s", g_szCountryCode[client], szName, szTextToAll);
-				else
-					if (GetConVarBool(g_hPointSystem))
-						PrintToConsole(i, "[%s] *SPEC* %s: %s", g_pr_rankname[client], szName, szTextToAll);
-					else
-						PrintToConsole(i, "*SPEC* %s: %s", szName, szTextToAll);
-		}
-	return Plugin_Handled;
-}
 //http://pastebin.com/YdUWS93H
 public bool CheatFlag(const char[] voice_inputfromfile, bool isCommand, bool remove)
 {
@@ -2549,13 +2574,30 @@ public void SpecListMenuDead(int client) // What Spectators see
 						ObservedUser2 = GetEntPropEnt(x, Prop_Send, "m_hObserverTarget");
 						if (ObservedUser == ObservedUser2)
 						{
+							if(stealthFound)
+							{
+								if (!SR_IsClientStealthed(x)) 
+             					{ 
+								count++;
+								//strip backslashes from names (causes lags and crashes?)
+								char cleanName[MAX_NAME_LENGTH];
+								Format(cleanName, sizeof(cleanName),"%N",x);
+								ReplaceString(cleanName,sizeof(cleanName),"\\","",false);
+								ReplaceString(cleanName,sizeof(cleanName),"#","",false);
+								if (count < 6)
+									Format(sSpecs, 512, "%s%s\n", sSpecs, cleanName);
+								}
+							} else
+							{
 							count++;
 							//strip backslashes from names (causes lags and crashes?)
 							char cleanName[MAX_NAME_LENGTH];
 							Format(cleanName, sizeof(cleanName),"%N",x);
 							ReplaceString(cleanName,sizeof(cleanName),"\\","",false);
+							ReplaceString(cleanName,sizeof(cleanName),"#","",false);
 							if (count < 6)
 								Format(sSpecs, 512, "%s%s\n", sSpecs, cleanName);
+							}
 						}
 						if (count == 6)
 							Format(sSpecs, 512, "%s...", sSpecs);
@@ -2578,7 +2620,6 @@ public void SpecListMenuDead(int client) // What Spectators see
 				else
 					Format(szPlayerRank, 32, "Rank: NA / %i", g_pr_RankedPlayers);
 			}
-
 			if (g_fPersonalRecord[ObservedUser] > 0.0)
 			{
 				FormatTimeFloat(client, g_fPersonalRecord[ObservedUser], 3, szTime2, sizeof(szTime2));
@@ -2680,7 +2721,6 @@ public void SpecListMenuDead(int client) // What Spectators see
 
 public void SpecListMenuAlive(int client) // What player sees
 {
-
 	if (IsFakeClient(client) || !g_bShowSpecs[client] || GetClientMenu(client) != MenuSource_None)
 		return;
 
@@ -2702,10 +2742,34 @@ public void SpecListMenuAlive(int client) // What player sees
 				Target = GetEntPropEnt(i, Prop_Send, "m_hObserverTarget");
 				if (Target == client)
 				{
+					if(stealthFound)
+					{
+						if (!SR_IsClientStealthed(i))  
+                			{ 
+							count++;
+							if (count < 6)
+								{
+								char cleanName[MAX_NAME_LENGTH];
+								Format(cleanName, sizeof(cleanName),"%N", i);
+								ReplaceString(cleanName,sizeof(cleanName),"\\","",false);
+								ReplaceString(cleanName,sizeof(cleanName),"#","",false);
+								Format(sSpecs, 512, "%s%s\n", sSpecs, cleanName);
+								//Format(sSpecs, 512, "%s%N\n", sSpecs, i);
+								}
+							}
+					} else
+					{
 					count++;
 					if (count < 6)
-						Format(sSpecs, 512, "%s%N\n", sSpecs, i);
-
+						{
+						char cleanName[MAX_NAME_LENGTH];
+						Format(cleanName, sizeof(cleanName),"%N", i);
+						ReplaceString(cleanName,sizeof(cleanName),"\\","",false);
+						ReplaceString(cleanName,sizeof(cleanName),"#","",false);
+						Format(sSpecs, 512, "%s%s\n", sSpecs, cleanName);
+						//Format(sSpecs, 512, "%s%N\n", sSpecs, i);
+						}
+					}
 				}
 				if (count == 6)
 					Format(sSpecs, 512, "%s...", sSpecs);
@@ -2753,31 +2817,26 @@ public void LoadInfoBot()
 	}
 }
 
-public void CreateNavFiles()
+public void CreateNavFile()
 {
-	char DestFile[256];
-	char SourceFile[256];
+	// check if source file exists
+	char SourceFile[128];
 	Format(SourceFile, sizeof(SourceFile), "maps/replay_bot.nav");
 	if (!FileExists(SourceFile))
 	{
 		LogError("<ckSurf> Failed to create .nav files. Reason: %s doesn't exist!", SourceFile);
 		return;
 	}
-	char map[256];
-	int mapListSerial = -1;
-	if (ReadMapList(g_MapList, mapListSerial, "mapcyclefile", MAPLIST_FLAG_CLEARARRAY | MAPLIST_FLAG_NO_DEFAULT) == null)
-		if (mapListSerial == -1)
-			return;
 
-	for (int i = 0; i < GetArraySize(g_MapList); i++)
+	// build nav file path
+	char DestFile[128];
+	Format(DestFile, 128, "maps/%s.nav", g_szMapName);
+
+	// copy if doesn't exist and reload via changelevel
+	if(!FileExists(DestFile))
 	{
-		GetArrayString(g_MapList, i, map, sizeof(map));
-		if (map[0])
-		{
-			Format(DestFile, sizeof(DestFile), "maps/%s.nav", map);
-			if (!FileExists(DestFile))
-				File_Copy(SourceFile, DestFile);
-		}
+		File_Copy(SourceFile, DestFile);
+		ForceChangeLevel(g_szMapName, ".nav file generate");
 	}
 }
 
@@ -2793,13 +2852,13 @@ public void SetInfoBotName(int ent)
 	if (!IsValidClient(g_InfoBot) || !GetConVarBool(g_hInfoBot))
 		return;
 	if (g_bMapChooser && EndOfMapVoteEnabled() && !HasEndOfMapVoteFinished())
-		Format(sNextMap, sizeof(sNextMap), "Pending Vote");
+		Format(sNextMap, sizeof(sNextMap), "Next Map: Pending Vote");
 	else
 	{
 		GetNextMap(sNextMap, sizeof(sNextMap));
 		char mapPieces[6][128];
 		int lastPiece = ExplodeString(sNextMap, "/", mapPieces, sizeof(mapPieces), sizeof(mapPieces[]));
-		Format(sNextMap, sizeof(sNextMap), "%s", mapPieces[lastPiece - 1]);
+		Format(sNextMap, sizeof(sNextMap), "Next Map: %s", mapPieces[lastPiece - 1]);
 	}
 	int iInfoBotTimeleft;
 	GetMapTimeLeft(iInfoBotTimeleft);
@@ -2812,13 +2871,13 @@ public void SetInfoBotName(int ent)
 	if (hTmp != null)
 		CloseHandle(hTmp);
 	if (GetConVarBool(g_hMapEnd) && iTimeLimit > 0)
-		Format(szBuffer, sizeof(szBuffer), "%s (in %s)", sNextMap, szTime);
+		Format(szBuffer, sizeof(szBuffer), "%s left.", sNextMap, szTime);
 	else
-		Format(szBuffer, sizeof(szBuffer), "Pending Vote (no time limit)");
-	SetClientName(g_InfoBot, szBuffer);
-	Client_SetScore(g_InfoBot, 9999);
-	CS_SetClientContributionScore(g_InfoBot, 99999);
-	CS_SetClientClanTag(g_InfoBot, "NEXTMAP");
+		Format(szBuffer, sizeof(szBuffer), "No Time Limit");
+	CS_SetClientClanTag(g_InfoBot, szTime);	
+	SetClientName(g_InfoBot, sNextMap);
+	Client_SetScore(g_InfoBot, 0);
+	CS_SetClientContributionScore(g_InfoBot, 2);	
 }
 
 public void CenterHudDead(int client)
@@ -3081,22 +3140,26 @@ public void CenterHudAlive(int client)
 			}
 			else
 				{
-					//SR Text: 
-					//PB TEXT: szPB
-					//RANK TEXT: szRank
-					//SERVER TEXT: g_szServerName1..3
-					//STAGE TEXT: szStage
-					//MAP TEXT: szMapName
-					//SPEED TEXT: szSpeed
-					//TIER TEXT: szTier
-					
-					switch(dispVersion)
+					if (!g_hCustomHud.BoolValue)
+						PrintHintText(client, "<font face='' size='21'><font color='#FF0000'>Stopped</font>%s %s\n<font color='#ffbb00'>PB:</font> %s%s\nStage: %s%s", pAika, g_szLastSRDifference[client], g_szLastPBDifference[client], szRank, StageString, szSpeed);
+					else
 						{
-							case 0: PrintHintText(client, "<font face=''size='21'>%s<font color='#FF0000'>Stopped</font> %s\n%s%s\n%s",timerText, szSR, szStage, szSpeed, szAdvert);
-							case 1: PrintHintText(client, "<font face=''size='21'>%s<font color='#FF0000'>Stopped</font>\t\t%s\n%s\t\t%s\n%s",timerText, szPB, szTier, szSpeed, szAdvert);
-							case 2: PrintHintText(client, "<font face=''size='21'>%s<font color='#FF0000'>Stopped</font>\t%s\n%s%s\n%s",timerText, szRank2, szStage, szSpeed, szAdvert);
-						}	
+						//SR Text: 
+						//PB TEXT: szPB
+						//RANK TEXT: szRank
+						//SERVER TEXT: g_szServerName1..3
+						//STAGE TEXT: szStage
+						//MAP TEXT: szMapName
+						//SPEED TEXT: szSpeed
+						//TIER TEXT: szTier
 					
+						switch(dispVersion)
+							{
+								case 0: PrintHintText(client, "<font face=''size='21'>%s<font color='#FF0000'>Stopped</font>%s\n%s%s\n%s",timerText, szSR, szStage, szSpeed, szAdvert);
+								case 1: PrintHintText(client, "<font face=''size='21'>%s<font color='#FF0000'>Stopped</font>\t\t%s\n%s\t\t%s\n%s",timerText, szPB, szTier, szSpeed, szAdvert);
+								case 2: PrintHintText(client, "<font face=''size='21'>%s<font color='#FF0000'>Stopped</font>\t%s\n%s%s\n%s",timerText, szRank2, szStage, szSpeed, szAdvert);
+							}	
+						}
 				}
 		}
 	}
@@ -3356,4 +3419,123 @@ void SetEntityOpacity(int ent, int iAlpha)
 		SetEntityRenderMode(ent, RENDER_TRANSCOLOR);
 		Entity_SetRenderColor(ent, -1, -1, -1, iAlpha);
 	}
+}
+
+void debug_msg(char[] msg)
+{
+	bool send = false;
+	if(g_hDebugMode.BoolValue)
+		send = true;
+	#if defined DEV_BUILD 
+	send = true;
+	#endif
+	if(send)
+		LogMessage(msg);
+}
+
+public bool RateLimit(int client)
+{
+	float currentTime = GetGameTime();
+	if (currentTime - g_fCommandLastUsed[client] < 0.5)
+	{
+		PrintToChat(client, "[%c%s%c] Please wait before using this command again", MOSSGREEN, g_szChatPrefix, WHITE);
+		return true;
+	}
+
+	g_fCommandLastUsed[client] = GetGameTime();
+	return false;
+}
+public bool RateLimit2(int client)
+{
+	float currentTime = GetGameTime();
+	if (currentTime - g_fCommandLastUsed[client] < 2)
+	{
+		PrintToChat(client, "[%c%s%c] Please wait before using this command again", MOSSGREEN, g_szChatPrefix, WHITE);
+		return true;
+	}
+
+	g_fCommandLastUsed[client] = GetGameTime();
+	return false;
+}
+public void botFix()
+{
+	for (int i = 1; i <= MaxClients; i++)
+		{
+			if (IsValidClient(i))
+			{
+				if (i == g_RecordBot)
+				{
+					StopPlayerMimic(i);
+					KickClient(i);
+					g_bTrailOn[i] = false;
+				}
+				if (i == g_BonusBot)
+				{
+					StopPlayerMimic(i);
+					KickClient(i);
+					g_bTrailOn[i] = false;
+				}
+			}
+		}
+	CreateTimer(1.0, BotRestartTimer);
+}
+void TransmitTriggers(bool transmit)
+{
+	// Hook only once
+	static bool s_bHooked = false;
+
+	// Have we done this before?
+	if (s_bHooked == transmit)
+		return;
+
+	// Loop through entities
+	char sBuffer[8];
+	int lastEdictInUse = GetEntityCount();
+	for (int entity = MaxClients + 1; entity <= lastEdictInUse; ++entity)
+	{
+		if (!IsValidEdict(entity))
+			continue;
+
+		// Is this entity a trigger?
+		GetEdictClassname(entity, sBuffer, sizeof(sBuffer));
+		if (strcmp(sBuffer, "trigger") != 0)
+			continue;
+
+		// Is this entity's model a VBSP model?
+		GetEntPropString(entity, Prop_Data, "m_ModelName", sBuffer, 2);
+		if (sBuffer[0] != '*') 
+		{
+			// The entity must have been created by a plugin and assigned some random model.
+			// Skipping in order to avoid console spam.
+			continue;
+		}
+
+		// Get flags
+		int effectFlags = GetEntData(entity, g_Offset_m_fEffects);
+		int edictFlags = GetEdictFlags(entity);
+
+		// Determine whether to transmit or not
+		if (transmit) 
+		{
+			effectFlags &= ~EF_NODRAW;
+			edictFlags &= ~FL_EDICT_DONTSEND;
+		} 
+		else 
+		{
+			effectFlags |= EF_NODRAW;
+			edictFlags |= FL_EDICT_DONTSEND;
+		}
+
+		// Apply state changes
+		SetEntData(entity, g_Offset_m_fEffects, effectFlags);
+		ChangeEdictState(entity, g_Offset_m_fEffects);
+		SetEdictFlags(entity, edictFlags);
+
+		// Should we hook?
+		if (transmit)
+			SDKHook(entity, SDKHook_SetTransmit, Hook_SetTriggerTransmit);
+		else
+			SDKUnhook(entity, SDKHook_SetTransmit, Hook_SetTriggerTransmit);
+	}
+	s_bHooked = transmit;
 }
