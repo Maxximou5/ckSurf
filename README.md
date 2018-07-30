@@ -1,5 +1,4 @@
-
-<h1>ckSurf 1.21</h1>
+# ckSurf 1.21
 <p><strong>Remember to backup your database before updating to a beta version</strong></p><br />
 <p><strong>Updating instructions from 1.17 -> 1.18: https://forums.alliedmods.net/showpost.php?p=2371063&postcount=841</strong><p>
 <p><strong>Updating instructions from 1.18 -> 1.19: download the new skillgroups.cfg and replace the old one in addons/sourcemod/configs. </br>
